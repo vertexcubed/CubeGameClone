@@ -1,0 +1,5 @@
+Block(
+    id: "dirt",
+    hardness: 1,
+    model: "block/dirt"
+)

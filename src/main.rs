@@ -1,14 +1,34 @@
-use std::f32::consts::PI;
+mod chunk;
+mod errors;
+mod plugin;
+mod asset;
+mod data;
+mod events;
+mod state;
+
+use crate::chunk::{ChunkData, PaletteEntry};
+use crate::data::block::{AllBlocks, Block, BlockLoader, BlockModel, BlockModelLoader};
+use crate::plugin::init::GameInitPlugin;
 use bevy::asset::RenderAssetUsages;
 use bevy::color::palettes::basic::WHITE;
 use bevy::input::mouse::AccumulatedMouseMotion;
-use bevy::pbr::wireframe::{NoWireframe, Wireframe, WireframeColor, WireframeConfig, WireframePlugin};
+use bevy::pbr::wireframe::{NoWireframe, WireframeConfig, WireframePlugin};
 use bevy::prelude::*;
 use bevy::render::mesh::{Indices, PrimitiveTopology};
 use bevy::render::render_resource::WgpuFeatures;
-use bevy::render::RenderPlugin;
 use bevy::render::settings::{RenderCreation, WgpuSettings};
+use bevy::render::RenderPlugin;
 use bevy::window::{CursorGrabMode, PrimaryWindow};
+use bitvec::field::BitField;
+use bitvec::prelude::Msb0;
+use bitvec::vec::BitVec;
+use bitvec::view::BitViewSized;
+use rand::distr::Uniform;
+use rand::Rng;
+use std::f32::consts::PI;
+use crate::asset::BlockMaterial;
+use crate::plugin::texture::{BlockTextures, TexturePlugin};
+use crate::state::MainGameState;
 
 #[derive(Component)]
 struct MainCamera;
@@ -32,22 +52,61 @@ impl Default for CameraSettings {
     }
 }
 
-#[derive(Debug, Resource)]
-struct BasicLevel {
-    data: [u64; 8]
+#[derive(Resource, Default)]
+struct SetupState {
+    setup: bool
 }
 
-struct SingleChunk;
 
-enum Facing {
-    North, // +z
-    South, // -z
-    East, // +x
-    West, // -x
-    Up, // +y
-    Down, // -y
+#[derive(Resource)]
+struct TestChunk {
+    inner: ChunkData
 }
+impl TestChunk {
+    fn new() -> Self {
+        let mut palette = vec![
+            PaletteEntry::new("stone"),
+            PaletteEntry::new("dirt"),
+            PaletteEntry::new("oak_planks"),
+            // PaletteEntry::new("diamond_ore"),
+            // PaletteEntry::new("iron_ore"),
+        ];
 
+        // calcualtes the closest power of two id size for the palette.
+        let id_size = ((palette.len() + 1) as f32).log2().ceil() as usize;
+
+
+        let mut vec = BitVec::with_capacity(id_size * 32768);
+        let mut rng = rand::rng();
+        for i in 0..32768 {
+            let scaled_idx = i * id_size;
+            // 0-4
+            let rand_id = rng.sample(Uniform::new(0, palette.len() + 1).unwrap());
+
+            if rand_id != 0 {
+                palette[rand_id - 1].increment_ref_count();
+            }
+            let arr = rand_id.into_bitarray::<Msb0>();
+            // println!("Bitarray: {}", arr);
+            
+            let slice = &arr[size_of::<usize>() * 8 - id_size..size_of::<usize>() * 8];
+            // println!("Slice: {}", slice);
+            // println!("Generated num: {}", rand_id);
+
+            vec.append(&mut slice.to_bitvec());
+        }
+
+        // println!("{:?}", vec);
+
+        
+        let mut data = ChunkData::new(vec, palette);
+        data.add_palette(PaletteEntry::new("diamond_ore"));
+        
+        TestChunk {
+            inner: data
+        }
+    }
+}
 
 
 fn main() {
@@ -64,21 +123,18 @@ fn main() {
                     }),
                 ..default()
             }),
+            MaterialPlugin::<BlockMaterial>::default(),
             WireframePlugin::default(),
+            GameInitPlugin::default(),
+            TexturePlugin::default(),
         ))
+        .init_asset::<Block>()
+        .init_asset::<BlockModel>()
+        .init_asset_loader::<BlockLoader>()
+        .init_asset_loader::<BlockModelLoader>()
         .init_resource::<CameraSettings>()
-        .insert_resource(BasicLevel {
-            data: [
-                0b11111111_10001101_00000000_11111111_01011010_01110101_11011101_00001111,
-                0b00001101_10111001_00001100_00000000_00000000_00000000_00010000_00000011,
-                0b00000000_00000000_00000000_00000000_00000000_00000000_00000000_00000000,
-                0b00000000_00000000_00101000_00000000_00000000_00000000_00000000_00000000,
-                0b11111111_11111111_11111101_11111111_11110111_11111111_11111111_11111111,
-                0b11111111_11111001_11100001_11111111_11100011_11111111_11111111_11111111,
-                0b11111111_11111111_11110111_11111111_11110111_11111111_11111111_11111111,
-                0b00000000_00000000_00000000_00000000_00000000_00000000_00000000_00000000,
-            ]
-        })
+        .init_resource::<SetupState>()
+        .insert_resource(TestChunk::new())
         .insert_resource(WireframeConfig {
             // The global wireframe config enables drawing of wireframes on every mesh,
             // except those with `NoWireframe`. Meshes with `Wireframe` will always have a wireframe,
@@ -88,8 +144,9 @@ fn main() {
             // Can be changed per mesh using the `WireframeColor` component.
             default_color: WHITE.into(),
         })
-        .add_systems(Startup, (setup, grab_cursor))
+        .add_systems(Startup, (grab_cursor))
         .add_systems(Update, (handle_input, toggle_wireframe))
+        .add_systems(OnEnter(MainGameState::InGame), setup)
         .run();
 }
 
@@ -133,11 +190,12 @@ fn handle_input(
     if kb_input.pressed(KeyCode::KeyD) {
         movement += transform.right().as_vec3();
     }
+    // up and down use world up instead - more intuitive
     if kb_input.pressed(KeyCode::Space) {
-        movement += transform.up().as_vec3();
+        movement += vec3(0., 1., 0.);
     }
     if kb_input.pressed(KeyCode::ShiftLeft) {
-        movement -= transform.up().as_vec3();
+        movement -= vec3(0., 1., 0.);
     }
 
     movement = movement.normalize_or_zero();
@@ -154,21 +212,24 @@ fn grab_cursor(
     window.cursor_options.visible = false;
 }
 
+// runs once when InGame reached
 fn setup(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
+    all_blocks: Res<AllBlocks>,
+    block_asset: Res<Assets<Block>>,
+    block_model_asset: Res<Assets<BlockModel>>,
+    block_textures: Res<BlockTextures>,
     camera_settings: Res<CameraSettings>,
-    level: Res<BasicLevel>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    level: Res<TestChunk>,
+    mut materials: ResMut<Assets<BlockMaterial>>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
+    info!("Loading world...");
 
-
-
-
-
-
-    let texture: Handle<Image> = asset_server.load("stone.png");
+    // let texture1: Handle<Image> = asset_server.load("texture/stone.png");
+    // let texture2: Handle<Image> = asset_server.load("dirt.png");
+    // let texture3: Handle<Image> = asset_server.load("oak_planks.png");
 
     commands.spawn((
         Camera3d::default(),
@@ -185,19 +246,18 @@ fn setup(
         Transform::from_xyz(25.0, 50.0, 10.0).looking_at(Vec3::ZERO, Vec3::Y)
     ));
 
-    let mesh = meshes.add(create_chunk_mesh(&level));
-    let material = materials.add(texture.clone());
+    let array_texture = block_textures.array_texture.clone();
+
+    let mesh = meshes.add(chunk::create_chunk_mesh(&level.inner, &all_blocks, &block_asset, &block_model_asset, &block_textures));
+    let material = materials.add(BlockMaterial {
+        array_texture
+    });
 
     commands.spawn((
         Mesh3d(mesh),
         MeshMaterial3d(material),
         Transform::from_xyz(0., 0., 0.)
     ));
-
-
-
-
-
 }
 
 
@@ -219,169 +279,8 @@ fn toggle_wireframe(
     }
 }
 
-fn create_chunk_mesh(level: &Res<BasicLevel>) -> Mesh {
-    // faces to make a mesh for
-    let mut faces = Vec::<(Facing, Vec3)>::new();
 
-    let mut positions = Vec::<[f32; 3]>::new();
-    let mut uv0s = Vec::<[f32; 2]>::new();
-    let mut normals = Vec::<[f32; 3]>::new();
-    let mut indices = Vec::<u32>::new();
-
-
-    for y in 0..8 {
-        let mut working_data = level.data[y];
-        let mut i = working_data.trailing_zeros() as usize;
-        while i < 64 {
-            let (x, z) = (i / 8, i % 8);
-            if should_make_face(Facing::North, level.data, (i, y)) {
-                faces.push((Facing::North, vec3(x as f32, y as f32, z as f32)));
-            }
-            if should_make_face(Facing::South, level.data, (i, y)) {
-                faces.push((Facing::South, vec3(x as f32, y as f32, z as f32)));
-            }
-            if should_make_face(Facing::East, level.data, (i, y)) {
-                faces.push((Facing::East, vec3(x as f32, y as f32, z as f32)));
-            }
-            if should_make_face(Facing::West, level.data, (i, y)) {
-                faces.push((Facing::West, vec3(x as f32, y as f32, z as f32)));
-            }
-            if should_make_face(Facing::Up, level.data, (i, y)) {
-                faces.push((Facing::Up, vec3(x as f32, y as f32, z as f32)));
-            }
-            if should_make_face(Facing::Down, level.data, (i, y)) {
-                faces.push((Facing::Down, vec3(x as f32, y as f32, z as f32)));
-            }
-
-            // zero out nth bit and move on
-            let mask: u64 = !(1 << i);
-            working_data = working_data & mask;
-            i = working_data.trailing_zeros() as usize;
-        }
-    }
-
-    let mut index_offset = 0;
-    for (dir, pos_offset) in faces {
-
-        // face data
-        let (face_pos, face_uv0, face_normal, face_index) = face_data(dir);
-
-        // offsets and adds vertices
-        for j in 0..4 {
-            let (pos, uv0, normal) = (face_pos[j], face_uv0[j], face_normal[j]);
-            // add offset for pos
-            let new_pos = [pos[0] + pos_offset.x, pos[1] + pos_offset.y, pos[2] + pos_offset.z];
-            positions.push(new_pos);
-            uv0s.push(uv0);
-            normals.push(normal);
-        }
-        // add index offset for indices
-        for j in 0..6 {
-            indices.push(face_index[j] + index_offset);
-        }
-
-        index_offset += 4;
-    }
-
-
-    // creates the chunk mesh
-    Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uv0s)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
-        .with_inserted_indices(Indices::U32(indices))
-}
-
-
-// outputs vertex specific data for this block and face
-fn face_data(facing: Facing) -> ([[f32; 3]; 4], [[f32; 2]; 4], [[f32; 3]; 4], [u32; 6]) {
-    match facing {
-        Facing::North => (
-            [ [0., 0., 1.], [0., 1., 1.], [1., 1., 1.], [1., 0., 1.], ],
-            [ [0.0, 1.0], [0.0, 0.0], [1.0, 0.0], [1.0, 1.0], ],
-            [ [0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0], ],
-            [ 0,3,1, 1,3,2, ],
-            ),
-        Facing::South => (
-            [ [0., 0., 0.], [0., 1., 0.], [1., 1., 0.], [1., 0., 0.], ],
-            [ [0.0, 1.0], [0.0, 0.0], [1.0, 0.0], [1.0, 1.0], ],
-            [ [0.0, 0.0, -1.0], [0.0, 0.0, -1.0], [0.0, 0.0, -1.0], [0.0, 0.0, -1.0], ],
-            [ 0,1,3, 1,2,3, ],
-            ),
-        Facing::East => (
-            [ [1., 0., 0.], [1., 0., 1.], [1., 1., 1.], [1., 1., 0.], ],
-            [ [1.0, 1.0], [0.0, 1.0], [0.0, 0.0], [1.0, 0.0], ],
-            [ [1.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 0.0, 0.0], ],
-            [ 0,3,1, 1,3,2, ],
-            ),
-        Facing::West => (
-            [ [0., 0., 0.], [0., 0., 1.], [0., 1., 1.], [0., 1., 0.], ],
-            [ [1.0, 1.0], [0.0, 1.0], [0.0, 0.0], [1.0, 0.0], ],
-            [ [-1.0, 0.0, 0.0], [-1.0, 0.0, 0.0], [-1.0, 0.0, 0.0], [-1.0, 0.0, 0.0], ],
-            [ 0,1,3, 1,2,3 ],
-            ),
-        Facing::Up => (
-            [ [0., 1., 0.], [1., 1., 0.], [1., 1., 1.], [0., 1., 1.], ],
-            [ [0.0, 1.0], [0.0, 0.0], [1.0, 0.0], [1.0, 1.0] ],
-            [ [0.0, 1.0, 0.0], [0.0, 1.0, 0.0], [0.0, 1.0, 0.0], [0.0, 1.0, 0.0], ],
-            [ 0,3,1, 1,3,2 ],
-        ),
-        Facing::Down => (
-            [ [0., 0., 0.], [1., 0., 0.], [1., 0., 1.], [0., 0., 1.], ],
-            [ [0.0, 1.0], [0.0, 0.0], [1.0, 0.0], [1.0, 1.0], ],
-            [ [0.0, -1.0, 0.0], [0.0, -1.0, 0.0], [0.0, -1.0, 0.0], [0.0, -1.0, 0.0], ],
-            [ 0,1,3, 1,2,3 ]
-        ),
-    }
-}
-
-fn should_make_face(facing: Facing, data: [u64; 8], pos: (usize, usize)) -> bool {
-
-    let (i, y) = pos;
-
-    // temporary: we wont have to do this for actual chunks since you can just check the next chunk over
-    let (x, z) = (i / 8, i % 8);
-    match facing {
-        Facing::North => {
-            if(z == 7) { return true; };
-        }
-        Facing::South => {
-            if(z == 0) { return true; };
-        }
-        Facing::East => {
-            if(x == 7) { return true; };
-        }
-        Facing::West => {
-            if(x == 0) { return true; };
-        }
-        Facing::Up => {
-            if(y == 7) { return true; };
-        }
-        Facing::Down => {
-            if(y == 0) { return true; };
-        }
-    };
-
-    let (new_pos, new_y) = new_block(facing, i, y);
-    let val = data[new_y] & (1 << new_pos);
-    val == 0
-}
-
-// no guarantee these are in bounds
-fn new_block(facing: Facing, index: usize, y: usize) -> (usize, usize) {
-    match facing {
-        Facing::North => (index + 1, y),
-        Facing::South => (index - 1, y),
-        Facing::East =>  (index + 8, y),
-        Facing::West =>  (index - 8, y),
-        Facing::Up =>    (index, y + 1),
-        Facing::Down =>  (index, y - 1),
-    }
-}
-
-
-
-fn create_cube() -> Mesh {
+fn _create_cube() -> Mesh {
     Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD)
         .with_inserted_attribute(
             Mesh::ATTRIBUTE_POSITION,

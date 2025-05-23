@@ -1,0 +1,5 @@
+Block(
+    id: "oak_planks",
+    hardness: 1,
+    model: "block/oak_planks"
+)
