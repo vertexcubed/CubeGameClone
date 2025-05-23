@@ -1,4 +1,4 @@
-use crate::errors::ChunkError;
+use crate::core::errors::ChunkError;
 use bevy::asset::{Assets, RenderAssetUsages};
 use bevy::math::{vec3, Vec3};
 use bevy::prelude::{debug, info, Mesh, Res};
@@ -6,9 +6,10 @@ use bevy::render::mesh::{Indices, MeshVertexAttribute, PrimitiveTopology, Vertex
 use bitvec::field::BitField;
 use bitvec::prelude::BitVec;
 use std::string::ToString;
-use crate::asset::BlockMaterial;
-use crate::data::block::{AllBlocks, Block, BlockModel};
-use crate::plugin::texture::BlockTextures;
+use crate::asset::material::BlockMaterial;
+use crate::asset::block::{Block, BlockModel};
+use crate::asset::procedural::BlockTextures;
+use crate::registry::block::BlockRegistry;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PaletteEntry {
@@ -54,6 +55,7 @@ impl Default for PaletteEntry {
 // In the future, they will also contain a "palette" for the different types of blocks in the world
 // For now we'll just do a byte array with the data
 pub struct ChunkData {
+    // number of bits per block.
     pub id_size: usize,
     // for now we'll do a vector of strings - later this will be a better id form
     palette: Vec<PaletteEntry>,
@@ -281,7 +283,7 @@ enum Facing {
 
 pub fn create_chunk_mesh(
     chunk: &ChunkData,
-    block_reg: &Res<AllBlocks>,
+    block_reg: &Res<BlockRegistry>,
     block_asset: &Res<Assets<Block>>,
     block_model_asset: &Res<Assets<BlockModel>>,
     block_textures: &Res<BlockTextures>,

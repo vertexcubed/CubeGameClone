@@ -1,16 +1,22 @@
-use crate::asset;
-use crate::data::block::{AllBlocks, Block};
-use crate::errors::RegistryError;
-use bevy::asset::{LoadedFolder, RecursiveDependencyLoadState};
+use bevy::app::{App, Plugin, Startup, Update};
+use bevy::asset::{AssetServer, Assets, Handle, LoadedFolder, RecursiveDependencyLoadState};
+use bevy::log::error;
 use bevy::prelude::*;
-use crate::state::{LoadingState, MainGameState};
+use crate::{asset, registry};
+use crate::asset::block::Block;
+use crate::core::errors::RegistryError;
+use crate::core::state::{LoadingState, MainGameState};
+use crate::registry::block::BlockRegistry;
+
+pub mod state;
+pub mod errors;
 
 #[derive(Default)]
-pub struct GameInitPlugin;
-impl Plugin for GameInitPlugin {
+pub struct CoreGamePlugin;
+
+impl Plugin for CoreGamePlugin {
     fn build(&self, app: &mut App) {
         app
-            .insert_resource(AllBlocks::default())
             .insert_resource(LoadedFolders::default())
             .init_state::<MainGameState>()
             .init_state::<LoadingState>()
@@ -44,7 +50,7 @@ fn check_loading_blocks(
     all_folders: Res<Assets<LoadedFolder>>,
     mut loaded_folders: ResMut<LoadedFolders>,
     all_blocks: Res<Assets<Block>>,
-    mut block_res: ResMut<AllBlocks>,
+    mut block_res: ResMut<BlockRegistry>,
 ) {
 
     let (folder_handle, already_loaded) = &loaded_folders.blocks;
@@ -59,11 +65,11 @@ fn check_loading_blocks(
     let block_folder = block_folder.unwrap();
     match asset_server.get_recursive_dependency_load_state(folder_handle) {
         Some(RecursiveDependencyLoadState::Loaded) => {
-            
+
             // we've loaded all blocks, yay! We can safely unwrap these
             let block_handles = asset::get_handles_in::<Block>(block_folder);
 
-            if let Err(err) = load_blocks(all_blocks, block_res, block_handles) {
+            if let Err(err) = registry::block::load_blocks(all_blocks, block_res, block_handles) {
                 error!("Error loading blocks: {err}")
             }
 
@@ -78,21 +84,6 @@ fn check_loading_blocks(
         _ => { }
     }
     //done
-}
-
-fn load_blocks(
-    block_asset: Res<Assets<Block>>,
-    mut block_res: ResMut<AllBlocks>,
-    block_vec: Vec<Handle<Block>>
-) -> Result<(), RegistryError> {
-
-    for h in block_vec {
-        let b = block_asset.get(&h).unwrap();
-        block_res.add(b.id.as_str(), h)?;
-    }
-    block_res.freeze();
-
-    Ok(())
 }
 
 // only runs in registry loading state

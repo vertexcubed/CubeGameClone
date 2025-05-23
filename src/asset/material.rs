@@ -5,42 +5,13 @@ use bevy::pbr::{MaterialPipeline, MaterialPipelineKey};
 use bevy::render::mesh::{MeshVertexAttribute, MeshVertexBufferLayoutRef, VertexFormat};
 use bevy::render::render_resource::{AsBindGroup, RenderPipelineDescriptor, ShaderRef, SpecializedMeshPipelineError};
 
-#[derive(Debug, thiserror::Error)]
-pub enum AssetLoaderError {
-    /// An [IO](std::io) Error
-    #[error("Could not load asset: {0}")]
-    Io(#[from] std::io::Error),
-    /// A [RON](ron) Error
-    #[error("Could not parse RON: {0}")]
-    RonSpannedError(#[from] ron::error::SpannedError),
-}
-
-
-// destructures a loaded folder into its asset handles.
-pub fn get_handles_in<T: Asset>(
-    folder: &LoadedFolder,
-) -> Vec<Handle<T>> {
-    // code by @coderdude1 in the Bevy discord. 
-    // https://discord.com/channels/691052431525675048/1326990470152323072/1326996564383895687
-    
-    let type_id = TypeId::of::<T>();
-
-    folder.handles
-        .clone()
-        .into_iter()
-        .filter_map(|h| {
-            if h.type_id() == type_id { Some(h.typed::<T>()) }
-            else { None }
-        })
-        .collect::<Vec<_>>()
-}
 
 const SHADER_ASSET_PATH: &str = "shader/block.wgsl";
 
 
 #[derive(Debug, Clone, Asset, TypePath, AsBindGroup)]
 pub struct BlockMaterial {
-    #[texture(0, dimension = "2d_array")]
+    #[texture(0, dimension = "2d_array")]   
     #[sampler(1)]
     pub array_texture: Handle<Image>,
 }

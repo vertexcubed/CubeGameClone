@@ -1,60 +1,15 @@
 use crate::asset::AssetLoaderError;
-use crate::errors::RegistryError;
+use crate::core::errors::RegistryError;
+use crate::core::state::LoadingState;
 use bevy::asset::io::Reader;
-use bevy::asset::{ron, AssetLoader, AssetPath, LoadContext};
+use bevy::asset::{ron, AssetLoader, AssetPath, LoadContext, RenderAssetUsages};
 use bevy::prelude::*;
+use bevy::render::render_resource::{Extent3d, TextureDimension};
 use bevy::tasks::ConditionalSendFuture;
-use bimap::BiMap;
 use bimap::hash::Iter;
+use bimap::BiMap;
 use serde::Deserialize;
-
-#[derive(Resource, Default, Debug)]
-pub struct AllBlocks {
-    map: BiMap<String, Handle<Block>>,
-    
-    frozen: bool,
-}
-impl AllBlocks {
-    pub fn get_block(&self, name: &str) -> Option<Handle<Block>> {
-        self.map.get_by_left(name).cloned()
-    }
-    
-    pub fn get_id(&self, block: &Handle<Block>) -> Option<String> {
-        self.map.get_by_right(block).cloned()
-    }
-    
-    pub fn add(&mut self, name: &str, value: Handle<Block>) -> Result<(), RegistryError>{
-        if self.frozen {
-            return Err(RegistryError::Frozen("block".to_string()));
-        }
-        
-        if let Some(_) = self.map.get_by_left(name) {
-            return Err(RegistryError::Duplicate(name.to_string(), "block".to_string()));
-        }
-        
-        self.map.insert(name.to_string(), value);
-        Ok(())
-    }
-    
-    pub fn iter(&self) -> Iter<'_, String, Handle<Block>> {
-        self.map.iter()
-    }
-    
-    pub fn is_frozen(&self) -> bool {
-        self.frozen
-    }
-    
-    // purposely cannot unfreeze a registry
-    pub fn freeze(&mut self) {
-        self.frozen = true;
-        info!("Freezing block registry.");
-    }
-}
-
-
-
-
-
+use std::collections::HashMap;
 
 
 #[derive(Debug, Hash, Clone, PartialEq, Eq, Asset, TypePath, Deserialize)]

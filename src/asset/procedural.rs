@@ -1,28 +1,18 @@
 use std::collections::HashMap;
-use bevy::asset::RenderAssetUsages;
-use bevy::prelude::*;
+use bevy::asset::{Assets, Handle, RenderAssetUsages};
+use bevy::image::Image;
+use bevy::prelude::{NextState, Res, ResMut, Resource};
 use bevy::render::render_resource::{Extent3d, TextureDimension};
-use crate::data::block::{AllBlocks, Block, BlockModel};
-use crate::state::LoadingState;
-
-// plugin that handles creating array textures and texture atlases
-#[derive(Default)]
-pub struct TexturePlugin;
-
-impl Plugin for TexturePlugin {
-    fn build(&self, app: &mut App) {
-        app
-            .init_resource::<BlockTextures>()
-            .add_systems(OnEnter(LoadingState::Textures), create_block_array_texture)
-        ;
-    }
-}
+use crate::asset::block::{Block, BlockModel};
+use crate::core::state::LoadingState;
+use crate::registry::block::BlockRegistry;
 
 #[derive(Debug, Default, Clone, Resource)]
 pub struct BlockTextures {
     map: HashMap<Handle<Image>, u32>,
     pub array_texture: Handle<Image>
 }
+
 impl BlockTextures {
     pub fn get_texture_id(&self, name: &Handle<Image>) -> u32 {
         self.map[name]
@@ -30,11 +20,10 @@ impl BlockTextures {
 }
 
 
-
 // runs once on entering Textures state.
 // All of these textures are guaranteed to be loaded
-fn create_block_array_texture(
-    all_blocks: Res<AllBlocks>,
+pub fn create_block_array_texture(
+    all_blocks: Res<BlockRegistry>,
     mut block_textures: ResMut<BlockTextures>,
     block_asset: Res<Assets<Block>>,
     block_model_asset: Res<Assets<BlockModel>>,
@@ -49,7 +38,7 @@ fn create_block_array_texture(
 
 
     for (k, v) in all_blocks.iter() {
-        
+
         let texture_handle = (
             &block_model_asset.get(
                 &block_asset.get(v).unwrap().model_handle
@@ -67,9 +56,9 @@ fn create_block_array_texture(
             (Some(s), Some(f)) => {
                 if descriptor.size != s {
                     panic!("Block array texture requires size {:?}, but texture {:?} has size {:?}",
-                        s,
-                        descriptor.label,
-                        descriptor.size
+                           s,
+                           descriptor.label,
+                           descriptor.size
                     );
                 }
                 if descriptor.format != f {
@@ -89,7 +78,7 @@ fn create_block_array_texture(
         };
 
 
-        
+
         match data {
             None => { panic!("Should not happen")}
             Some(d) => {
@@ -118,7 +107,7 @@ fn create_block_array_texture(
         format.unwrap(),
         RenderAssetUsages::RENDER_WORLD | RenderAssetUsages::MAIN_WORLD
     );
-    
+
     block_textures.array_texture = image_asset.add(new_image);
 
     next_load_state.set(LoadingState::Done);
