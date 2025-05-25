@@ -5,7 +5,6 @@ use crate::asset::block::{Block, BlockLoader, BlockModel, BlockModelLoader};
 use crate::asset::procedural::BlockTextures;
 use crate::core::state::LoadingState;
 
-pub mod material;
 pub mod block;
 pub mod procedural;
 

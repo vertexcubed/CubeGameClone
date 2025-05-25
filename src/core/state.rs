@@ -13,5 +13,6 @@ pub enum LoadingState {
     #[default]
     Registries,
     Textures,
+    BlockCache,
     Done,
 }

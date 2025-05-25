@@ -2,8 +2,9 @@ mod asset;
 mod core;
 mod registry;
 mod world;
+mod render;
 
-use crate::asset::material::BlockMaterial;
+use render::material::BlockMaterial;
 use crate::registry::RegistryPlugin;
 use crate::world::WorldPlugin;
 use asset::AssetPlugin;
@@ -23,7 +24,7 @@ use core::CoreGamePlugin;
 use rand::distr::Uniform;
 use rand::Rng;
 use world::chunk::{ChunkData, PaletteEntry};
-
+use crate::render::GameRenderPlugin;
 
 #[derive(Resource)]
 struct TestChunk {
@@ -90,23 +91,14 @@ fn main() {
                     }),
                 ..default()
             }),
-            MaterialPlugin::<BlockMaterial>::default(),
             WireframePlugin::default(),
             CoreGamePlugin::default(),
             AssetPlugin::default(),
             RegistryPlugin::default(),
             WorldPlugin::default(),
+            GameRenderPlugin::default(),
         ))
         .insert_resource(TestChunk::new())
-        .insert_resource(WireframeConfig {
-            // The global wireframe config enables drawing of wireframes on every mesh,
-            // except those with `NoWireframe`. Meshes with `Wireframe` will always have a wireframe,
-            // regardless of the global configuration.
-            global: false,
-            // Controls the default color of all wireframes. Used as the default color for global wireframes.
-            // Can be changed per mesh using the `WireframeColor` component.
-            default_color: WHITE.into(),
-        })
 
         .run();
 }

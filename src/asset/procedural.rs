@@ -6,11 +6,13 @@ use bevy::render::render_resource::{Extent3d, TextureDimension};
 use crate::asset::block::{Block, BlockModel};
 use crate::core::state::LoadingState;
 use crate::registry::block::BlockRegistry;
+use crate::render::material::BlockMaterial;
 
 #[derive(Debug, Default, Clone, Resource)]
 pub struct BlockTextures {
     map: HashMap<Handle<Image>, u32>,
-    pub array_texture: Handle<Image>
+    pub array_texture: Handle<Image>,
+    pub material: Handle<BlockMaterial>,
 }
 
 impl BlockTextures {
@@ -28,7 +30,8 @@ pub fn create_block_array_texture(
     block_asset: Res<Assets<Block>>,
     block_model_asset: Res<Assets<BlockModel>>,
     mut image_asset: ResMut<Assets<Image>>,
-    mut next_load_state: ResMut<NextState<LoadingState>>
+    mut next_load_state: ResMut<NextState<LoadingState>>,
+    mut materials: ResMut<Assets<BlockMaterial>>,
 ) {
     let mut i = 0_u32;
 
@@ -109,6 +112,8 @@ pub fn create_block_array_texture(
     );
 
     block_textures.array_texture = image_asset.add(new_image);
-
-    next_load_state.set(LoadingState::Done);
+    block_textures.material = materials.add(BlockMaterial {
+        array_texture: block_textures.array_texture.clone(),
+    });
+    next_load_state.set(LoadingState::BlockCache);
 }

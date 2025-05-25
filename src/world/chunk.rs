@@ -1,15 +1,16 @@
+use crate::asset::block::{Block, BlockModel};
+use crate::asset::procedural::BlockTextures;
 use crate::core::errors::ChunkError;
+use crate::registry::block::BlockRegistry;
+use crate::render::material::BlockMaterial;
+use crate::render::MeshDataCache;
 use bevy::asset::{Assets, RenderAssetUsages};
 use bevy::math::{vec3, Vec3};
-use bevy::prelude::{debug, info, Mesh, Res};
+use bevy::prelude::{debug, info, Component, Mesh, Res};
 use bevy::render::mesh::{Indices, MeshVertexAttribute, PrimitiveTopology, VertexFormat};
 use bitvec::field::BitField;
 use bitvec::prelude::BitVec;
 use std::string::ToString;
-use crate::asset::material::BlockMaterial;
-use crate::asset::block::{Block, BlockModel};
-use crate::asset::procedural::BlockTextures;
-use crate::registry::block::BlockRegistry;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PaletteEntry {
@@ -18,6 +19,7 @@ pub struct PaletteEntry {
     pub block_name: String,
     // blockstate info added later
 }
+
 impl PaletteEntry {
     pub fn new(block_name: &str) -> Self {
         PaletteEntry {
@@ -54,6 +56,7 @@ impl Default for PaletteEntry {
 // A chunk is a 32x32x32 region of the world which contains blocks and blockstates.
 // In the future, they will also contain a "palette" for the different types of blocks in the world
 // For now we'll just do a byte array with the data
+#[derive(Debug, Clone, Component)]
 pub struct ChunkData {
     // number of bits per block.
     pub id_size: usize,
@@ -268,6 +271,12 @@ fn xyz_to_index(x: usize, y: usize, z: usize) -> usize {
     (max * max * y) + (max * x) + z
 }
 
+//===============
+// - mesh stuff -
+//===============
+
+
+
 #[derive(Debug, Copy, Clone, PartialEq)]
 enum Facing {
     North, // +z
@@ -283,14 +292,12 @@ enum Facing {
 
 pub fn create_chunk_mesh(
     chunk: &ChunkData,
-    block_reg: &Res<BlockRegistry>,
-    block_asset: &Res<Assets<Block>>,
-    block_model_asset: &Res<Assets<BlockModel>>,
-    block_textures: &Res<BlockTextures>,
+    cache: &MeshDataCache,
 ) -> Mesh {
     
-    info!("Creating chunk mesh.");
-    
+    // info!("Creating chunk mesh.");
+
+    let model_map = cache.inner.load();
     
     // faces to make a mesh for
     let mut faces = Vec::<(Facing, Vec3, u32)>::new();
@@ -307,17 +314,15 @@ pub fn create_chunk_mesh(
     let mut working_data = chunk.data.clone();
     // make sure that index points to the first bit of the id.
     let mut index = (working_data.leading_zeros() / chunk.id_size) * chunk.id_size;
-    debug!("Length of working_data: {}", working_data.len());
+    // debug!("Length of working_data: {}", working_data.len());
 
     while (index + chunk.id_size) < working_data.len() {
 
         let id = block_at_raw(&working_data, chunk.id_size, index);
 
         let block_id = chunk.lookup_palette(id).unwrap();
-        let block_handle = block_reg.get_block(block_id.block_name.as_str()).unwrap();
-        let block = block_asset.get(&block_handle).unwrap();
-        let texture = &block_model_asset.get(&block.model_handle).unwrap().texture_handle;
-        let array_id = block_textures.get_texture_id(texture);
+        let block_model = model_map.get(&block_id.block_name).unwrap();
+        let array_id = block_model.index;
         
         // println!("Block is {:?}", block);
         
@@ -378,7 +383,7 @@ pub fn create_chunk_mesh(
         index_offset += 4;
     }
     
-    info!("Finished creating chunk mesh");
+    // info!("Finished creating chunk mesh");
 
 
     // creates the chunk mesh
