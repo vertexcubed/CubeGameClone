@@ -1,13 +1,15 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use arc_swap::ArcSwap;
-use bevy::app::{App, Plugin};
+use bevy::app::{App, Plugin, Startup};
 use bevy::asset::{AssetContainer, Assets};
 use bevy::color::palettes::basic::WHITE;
 use bevy::input::ButtonInput;
 use bevy::pbr::MaterialPlugin;
 use bevy::pbr::wireframe::{NoWireframe, WireframeConfig};
 use bevy::prelude::{KeyCode, Mesh3d, NextState, OnEnter, Query, Res, ResMut, Resource, Update, Visibility, With, Without};
+use bevy::render::mesh::allocator::MeshAllocatorSettings;
+use bevy::render::RenderApp;
 use crate::asset::block::{Block, BlockModel};
 use crate::asset::procedural::BlockTextures;
 use crate::core::state::LoadingState;
@@ -38,10 +40,18 @@ impl Plugin for GameRenderPlugin {
             .add_systems(Update, toggle_wireframe)
             .add_systems(OnEnter(LoadingState::BlockCache), create_block_data_cache)
         ;
+        if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
+            render_app.add_systems(Startup, update_mesh_allocator);
+        }
     }
 }
 
 
+fn update_mesh_allocator(
+    mut mesh_allocator_settings: ResMut<MeshAllocatorSettings>,
+) {
+    mesh_allocator_settings.growth_factor = 3.0;
+}
 
 fn toggle_wireframe(
     kb_input: Res<ButtonInput<KeyCode>>,

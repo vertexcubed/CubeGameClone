@@ -26,56 +26,6 @@ use rand::Rng;
 use world::chunk::{ChunkData, PaletteEntry};
 use crate::render::GameRenderPlugin;
 
-#[derive(Resource)]
-struct TestChunk {
-    inner: ChunkData
-}
-impl TestChunk {
-    fn new() -> Self {
-        let mut palette = vec![
-            PaletteEntry::new("stone"),
-            PaletteEntry::new("dirt"),
-            PaletteEntry::new("oak_planks"),
-            // PaletteEntry::new("diamond_ore"),
-            // PaletteEntry::new("iron_ore"),
-        ];
-
-        // calcualtes the closest power of two id size for the palette.
-        let id_size = ((palette.len() + 1) as f32).log2().ceil() as usize;
-
-
-        let mut vec = BitVec::with_capacity(id_size * 32768);
-        let mut rng = rand::rng();
-        for i in 0..32768 {
-            let scaled_idx = i * id_size;
-            // 0-4
-            let rand_id = rng.sample(Uniform::new(0, palette.len() + 1).unwrap());
-
-            if rand_id != 0 {
-                palette[rand_id - 1].increment_ref_count();
-            }
-            let arr = rand_id.into_bitarray::<Msb0>();
-            // println!("Bitarray: {}", arr);
-            
-            let slice = &arr[size_of::<usize>() * 8 - id_size..size_of::<usize>() * 8];
-            // println!("Slice: {}", slice);
-            // println!("Generated num: {}", rand_id);
-
-            vec.append(&mut slice.to_bitvec());
-        }
-
-        // println!("{:?}", vec);
-
-        
-        let mut data = ChunkData::new(vec, palette);
-        data.add_palette(PaletteEntry::new("diamond_ore"));
-        
-        TestChunk {
-            inner: data
-        }
-    }
-}
-
 
 fn main() {
 
@@ -98,7 +48,6 @@ fn main() {
             WorldPlugin::default(),
             GameRenderPlugin::default(),
         ))
-        .insert_resource(TestChunk::new())
 
         .run();
 }

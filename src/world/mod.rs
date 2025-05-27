@@ -1,6 +1,8 @@
 use std::collections::{HashMap, VecDeque};
 use std::f32::consts::PI;
 use std::sync::{Arc, RwLock};
+use std::time::Instant;
+use bevy::asset::AssetContainer;
 use bevy::input::mouse::AccumulatedMouseMotion;
 use bevy::pbr::wireframe::{NoWireframe, WireframeConfig};
 use bevy::prelude::*;
@@ -10,7 +12,9 @@ use bevy::window::{CursorGrabMode, PrimaryWindow};
 use bitvec::order::Msb0;
 use bitvec::prelude::BitVec;
 use bitvec::view::BitViewSized;
-use crate::{TestChunk};
+use rand::distr::Uniform;
+use rand::Rng;
+use cache::ChunkCache;
 use crate::asset::block::{Block, BlockModel};
 use crate::render::material::BlockMaterial;
 use crate::asset::procedural::BlockTextures;
@@ -18,10 +22,11 @@ use crate::core::state::MainGameState;
 use crate::registry::block::BlockRegistry;
 use crate::render::MeshDataCache;
 use crate::world::camera::{CameraSettings, MainCamera};
-use crate::world::chunk::{ChunkData, PaletteEntry};
+use crate::world::chunk::{ChunkComponent, ChunkData, ChunkMeshStatus, PaletteEntry};
 
 pub mod chunk;
 mod camera;
+mod cache;
 
 #[derive(Default)]
 pub struct WorldPlugin;
@@ -34,7 +39,9 @@ impl Plugin for WorldPlugin {
             .init_resource::<ChunkSpawner>()
 
             .add_systems(Update, (handle_input, ))
-            .add_systems(Update, (temp_create_chunk, receive_generated_chunks, start_generating_meshes, receive_generated_meshes, upload_meshes).chain())
+            .add_systems(FixedUpdate, queue_mesh_creation)
+            .add_systems(Update, (temp_create_chunk, receive_generated_chunks, create_chunk_entities).chain())
+            .add_systems(Update, (receive_generated_meshes, upload_meshes).chain())
             .add_systems(OnEnter(MainGameState::InGame), (setup, grab_cursor, create_world))
         ;
     }
@@ -108,7 +115,6 @@ fn setup(
     block_data_cache: Res<MeshDataCache>,
     block_textures: Res<BlockTextures>,
     camera_settings: Res<CameraSettings>,
-    level: Res<TestChunk>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
     info!("Loading world...");
@@ -131,45 +137,19 @@ fn setup(
         DirectionalLight::default(),
         Transform::from_xyz(25.0, 50.0, 10.0).looking_at(Vec3::ZERO, Vec3::Y)
     ));
-
-    let array_texture = block_textures.array_texture.clone();
-
-    let mesh = meshes.add(chunk::create_chunk_mesh(&level.inner, &block_data_cache));
-
-    commands.spawn((
-        Mesh3d(mesh),
-        MeshMaterial3d(block_textures.material.clone()),
-        Transform::from_xyz(0., 0., 0.)
-    ));
 }
 
 #[derive(Component, Debug, Default)]
-pub struct World;
-
-
-#[derive(Component, Debug, Default)]
-pub struct ChunkCache {
-    map: HashMap<(i32, i32, i32), Box<ChunkData>>
-}
-impl ChunkCache {
-    pub fn get(&self, x: i32, y: i32, z: i32) -> &Box<ChunkData> {
-        if self.map.contains_key(&(x, y, z)) {
-            &self.map[&(x, y, z)]
-        }
-        else {
-            todo!("Create chunks that haven't been loaded yet")
-        }
-    }
-}
+pub struct GameWorld;
 
 
 fn create_world(
     mut commands: Commands,
 ) {
     commands.spawn((
-            World,
-            ChunkCache::default(),
-            ChunkQueue::default(),
+        GameWorld,
+        ChunkCache::default(),
+        ChunkQueue::default(),
         ));
 }
 
@@ -207,19 +187,22 @@ fn receive_generated_chunks(
 }
 
 // all generated chunks start to mesh
-fn start_generating_meshes(
-    mut chunk_queue: Single<&mut ChunkQueue>,
-    mesh_cache: Res<MeshDataCache>,
+fn create_chunk_entities(
+    mut commands: Commands,
+    mut world: Single<(&mut ChunkQueue, &mut ChunkCache)>,
+    block_textures: Res<BlockTextures>
 ) {
+    let (mut chunk_queue, mut chunk_cache) = world.into_inner();
+
     while !chunk_queue.finished_generating.is_empty() {
         let (coord, data) = chunk_queue.finished_generating.pop_front().unwrap();
-        let arc_data = Arc::new(data);
 
-        let cache = Arc::new(mesh_cache.clone());
-        let task = AsyncComputeTaskPool::get().spawn(async move {
-            chunk::create_chunk_mesh(arc_data.as_ref(), &cache)
-        });
-        chunk_queue.currently_meshing.insert(coord, task);
+        let e = commands.spawn((
+            chunk::pos_to_transform(coord),
+            MeshMaterial3d(block_textures.material.clone()),
+            ChunkComponent::new(coord, data)
+        )).id();
+        chunk_cache.add_to_cache(coord, e);
     }
 }
 
@@ -248,24 +231,103 @@ fn receive_generated_meshes(
 
 fn upload_meshes(
     mut commands: Commands,
-    mut chunk_queue: Single<&mut ChunkQueue>,
+    world: Single<(&mut ChunkQueue, &mut ChunkCache)>,
+    mut q_chunks: Query<&mut ChunkComponent>,
     mut meshes: ResMut<Assets<Mesh>>,
-    block_textures: Res<BlockTextures>
 
 ) {
+    let (mut chunk_queue, chunk_cache) = world.into_inner();
+
+    // let mut new_entities = Vec::new();
     while !chunk_queue.finished_meshing.is_empty() {
         let (coord, mesh) = chunk_queue.finished_meshing.pop_front().unwrap();
 
-        let transform = Transform::from_xyz((coord.x * ChunkData::CHUNK_SIZE as i32) as f32, (coord.y * ChunkData::CHUNK_SIZE as i32) as f32, (coord.z * ChunkData::CHUNK_SIZE as i32) as f32);
+        let entity = chunk_cache.get_chunk(coord).expect("Can't remesh chunk that isn't in memory!");
+        let mut component = q_chunks.get_mut(entity).expect("Invalid entity id");
 
-        commands.spawn((
-            transform,
-            Mesh3d(meshes.add(mesh)),
-            MeshMaterial3d(block_textures.material.clone()),
-            // chunk_data,
-        ));
+        component.mesh_status = ChunkMeshStatus::Meshed;
+        // will replace the mesh if it already has one.
+        commands.entity(entity).insert(Mesh3d(meshes.add(mesh)));
     }
 }
+
+
+fn queue_mesh_creation(
+    camera: Single<&Transform, With<MainCamera>>,
+    mut world: Single<(&mut ChunkQueue, &mut ChunkCache)>,
+    mut q_chunks: Query<&mut ChunkComponent>,
+    mut mesh_cache: Res<MeshDataCache>,
+
+) {
+
+    //TODO: do by player render distance
+
+    let (mut chunk_queue, chunk_cache) = world.into_inner();
+    
+    let mut to_mesh = VecDeque::new();
+    {
+        for chunk in q_chunks.iter() {
+            match chunk.mesh_status {
+                ChunkMeshStatus::Meshed => {
+                    continue;
+                }
+                ChunkMeshStatus::None | ChunkMeshStatus::NeedsReMeshing => {
+                    // if we've already submitted a mesh task for this chunk, skip
+                    if chunk_queue.currently_meshing.contains_key(&chunk.pos) {
+                        continue;
+                    }
+                    to_mesh.push_back(chunk);
+                }
+            }
+        }
+    }
+
+    while !to_mesh.is_empty() {
+        // create a new mesh
+
+        //TODO: check if neighbors are in cache, if not - can't mesh.
+
+        let chunk = to_mesh.pop_front().unwrap();
+        let north = chunk_cache.get_chunk(chunk.pos + ivec3(0, 0, 1));
+        let south = chunk_cache.get_chunk(chunk.pos + ivec3(0, 0, -1));
+        let east = chunk_cache.get_chunk(chunk.pos + ivec3(1, 0, 0));
+        let west = chunk_cache.get_chunk(chunk.pos + ivec3(-1, 0, 0));
+        if let (Some(north), Some(south), Some(east), Some(west)) = (north, south, east, west) {
+
+
+            let cache = mesh_cache.clone();
+            let chunk_arc = chunk.borrow_data();
+            let north_arc = q_chunks.get(north).unwrap().borrow_data();
+            let south_arc = q_chunks.get(south).unwrap().borrow_data();
+            let east_arc = q_chunks.get(east).unwrap().borrow_data();
+            let west_arc = q_chunks.get(west).unwrap().borrow_data();
+
+            let task = AsyncComputeTaskPool::get().spawn(async move {
+                // read the data
+                let data = chunk_arc.read().unwrap();
+                let north_data = north_arc.read().unwrap();
+                let south_data = south_arc.read().unwrap();
+                let east_data = east_arc.read().unwrap();
+                let west_data = west_arc.read().unwrap();
+                let neighbors: chunk::NeighborData = (
+                    &north_data,
+                    &south_data,
+                    &east_data,
+                    &west_data,
+                    //TODO: Up and down!
+                    &west_data,
+                    &west_data,
+                );
+
+                // create the mesh
+                chunk::create_chunk_mesh(&data, &cache, Some(neighbors))
+            });
+            chunk_queue.currently_meshing.insert(chunk.pos, task);
+        }
+    }
+}
+
+
 
 
 #[derive(Resource, Debug, Clone)]
@@ -277,7 +339,7 @@ struct ChunkSpawner {
 impl Default for ChunkSpawner {
     fn default() -> Self {
         Self {
-            data: make_data(),
+            data: make_data_chaos(),
             x: 1,
             z: 1
         }
@@ -292,7 +354,11 @@ fn temp_create_chunk(
     // if kb_input.just_pressed(KeyCode::KeyX) {
     //
     //     let task = AsyncComputeTaskPool::get().spawn(async move {
-    //         make_data()
+    //         // let now = Instant::now();
+    //         let ret = make_data();
+    //         // let elapsed = now.elapsed().as_secs_f64();
+    //         // info!("Created chunk data. Took {} seconds,", elapsed);
+    //         ret
     //     });
     //     chunk_queue.currently_generating.insert(ivec3(chunk_spawner.x, 0, chunk_spawner.z), task);
     //
@@ -301,14 +367,11 @@ fn temp_create_chunk(
     // }
 
     if kb_input.just_pressed(KeyCode::KeyX) {
-        for x in -20..21 {
-            for z in -20..21 {
-                if x == 0 && z == 0 {
-                    continue;
-                }
-
+        info!("Loading chunks...");
+        for x in -10..11 {
+            for z in -10..11 {
                 let task = AsyncComputeTaskPool::get().spawn(async move {
-                    make_data()
+                    make_data_chaos()
                 });
                 chunk_queue.currently_generating.insert(ivec3(x, 0, z), task);
             }
@@ -354,4 +417,45 @@ fn make_data() -> ChunkData {
 
     ChunkData::new(vec, palette)
 
+}
+
+
+pub fn make_data_chaos() -> ChunkData {
+    let mut palette = vec![
+        PaletteEntry::new("stone"),
+        PaletteEntry::new("dirt"),
+        PaletteEntry::new("oak_planks"),
+        // PaletteEntry::new("diamond_ore"),
+        // PaletteEntry::new("iron_ore"),
+    ];
+
+    // calcualtes the closest power of two id size for the palette.
+    let id_size = ((palette.len() + 1) as f32).log2().ceil() as usize;
+
+
+    let mut vec = BitVec::with_capacity(id_size * 32768);
+    let mut rng = rand::rng();
+
+    for i in 0..32768 {
+        let scaled_idx = i * id_size;
+        // 0-4
+        let rand_id = rng.sample(Uniform::new(0, palette.len() + 1).unwrap());
+
+        if rand_id != 0 {
+            palette[rand_id - 1].increment_ref_count();
+        }
+        let arr = rand_id.into_bitarray::<Msb0>();
+        // println!("Bitarray: {}", arr);
+
+        let slice = &arr[size_of::<usize>() * 8 - id_size..size_of::<usize>() * 8];
+        // println!("Slice: {}", slice);
+        // println!("Generated num: {}", rand_id);
+
+        vec.append(&mut slice.to_bitvec());
+    }
+
+    // println!("{:?}", vec);
+
+
+    ChunkData::new(vec, palette)
 }
