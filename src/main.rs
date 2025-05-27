@@ -25,7 +25,7 @@ use rand::distr::Uniform;
 use rand::Rng;
 use world::chunk::{ChunkData, PaletteEntry};
 use crate::render::GameRenderPlugin;
-
+use crate::render::pipeline::GameRenderPipelinePlugin;
 
 fn main() {
 
@@ -47,6 +47,7 @@ fn main() {
             RegistryPlugin::default(),
             WorldPlugin::default(),
             GameRenderPlugin::default(),
+            GameRenderPipelinePlugin::default(),
         ))
 
         .run();

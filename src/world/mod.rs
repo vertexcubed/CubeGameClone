@@ -22,7 +22,7 @@ use crate::core::state::MainGameState;
 use crate::registry::block::BlockRegistry;
 use crate::render::MeshDataCache;
 use crate::world::camera::{CameraSettings, MainCamera};
-use crate::world::chunk::{ChunkComponent, ChunkData, ChunkMeshStatus, PaletteEntry};
+use crate::world::chunk::{ChunkComponent, ChunkData, ChunkNeedsMeshing, PaletteEntry};
 
 pub mod chunk;
 mod camera;
@@ -158,8 +158,8 @@ struct ChunkQueue {
 
     currently_generating: HashMap<IVec3, Task<ChunkData>>,
     finished_generating: VecDeque<(IVec3, ChunkData)>,
-    currently_meshing: HashMap<IVec3, Task<Mesh>>,
-    finished_meshing: VecDeque<(IVec3, Mesh)>,
+    currently_meshing: HashMap<IVec3, Task<Option<Mesh>>>,
+    finished_meshing: VecDeque<(IVec3, Option<Mesh>)>,
 }
 
 // receives chunks that have finished generating.
@@ -200,7 +200,8 @@ fn create_chunk_entities(
         let e = commands.spawn((
             chunk::pos_to_transform(coord),
             MeshMaterial3d(block_textures.material.clone()),
-            ChunkComponent::new(coord, data)
+            ChunkComponent::new(coord, data),
+            ChunkNeedsMeshing
         )).id();
         chunk_cache.add_to_cache(coord, e);
     }
@@ -229,33 +230,69 @@ fn receive_generated_meshes(
     }
 }
 
+const HARD_LIMIT: i32 = 5;
+const SCALE: i32 = 175000;
+
+const fn limit_scale(indices_size: i32) -> i32 {
+    let mut y = indices_size - 10000;
+    // clamp to 0 to avoid sqrting a negative number.
+    if y < 0 { y = 0; }
+    (y / (SCALE / HARD_LIMIT)).isqrt()
+}
+
+
 fn upload_meshes(
     mut commands: Commands,
     world: Single<(&mut ChunkQueue, &mut ChunkCache)>,
     mut q_chunks: Query<&mut ChunkComponent>,
     mut meshes: ResMut<Assets<Mesh>>,
-
 ) {
     let (mut chunk_queue, chunk_cache) = world.into_inner();
 
+    // if !chunk_queue.finished_meshing.is_empty() {
+    //     println!("Currently meshing queue size: {}", chunk_queue.currently_meshing.len());
+    //     println!("Chunk queue size: {}", chunk_queue.finished_meshing.len());
+    // }
+
+
     // let mut new_entities = Vec::new();
-    while !chunk_queue.finished_meshing.is_empty() {
+    let mut hard_process_limit = HARD_LIMIT;
+    while !chunk_queue.finished_meshing.is_empty() && hard_process_limit > 0 {
+
         let (coord, mesh) = chunk_queue.finished_meshing.pop_front().unwrap();
+        
+        // air - we don't need to make a mesh and can just move on
+        if mesh.is_none() {
+            continue;
+        }
+        
+        let mesh = mesh.unwrap();
+        
+        let mesh_size = mesh.indices().unwrap().len();
+        
+        // scales the amount of "work" done by how complex this mesh is
+        // if the mesh is very complex, less meshes will be uploaded this frame.
+        let to_sub = limit_scale(mesh_size as i32);
+
+        // println!("Coord: {}, count: {}", coord, counter.count);
 
         let entity = chunk_cache.get_chunk(coord).expect("Can't remesh chunk that isn't in memory!");
-        let mut component = q_chunks.get_mut(entity).expect("Invalid entity id");
+        // let mut component = q_chunks.get_mut(entity).expect("Invalid entity id");
 
-        component.mesh_status = ChunkMeshStatus::Meshed;
         // will replace the mesh if it already has one.
         commands.entity(entity).insert(Mesh3d(meshes.add(mesh)));
+        // counter.count += 1;
+        hard_process_limit -= i32::max(1, to_sub);
     }
 }
 
 
 fn queue_mesh_creation(
+    mut commands: Commands,
     camera: Single<&Transform, With<MainCamera>>,
     mut world: Single<(&mut ChunkQueue, &mut ChunkCache)>,
-    mut q_chunks: Query<&mut ChunkComponent>,
+    needs_mesh: Query<(Entity, &ChunkComponent), With<ChunkNeedsMeshing>>,
+    q_chunks: Query<&ChunkComponent>,
     mut mesh_cache: Res<MeshDataCache>,
 
 ) {
@@ -263,37 +300,27 @@ fn queue_mesh_creation(
     //TODO: do by player render distance
 
     let (mut chunk_queue, chunk_cache) = world.into_inner();
-    
-    let mut to_mesh = VecDeque::new();
-    {
-        for chunk in q_chunks.iter() {
-            match chunk.mesh_status {
-                ChunkMeshStatus::Meshed => {
-                    continue;
-                }
-                ChunkMeshStatus::None | ChunkMeshStatus::NeedsReMeshing => {
-                    // if we've already submitted a mesh task for this chunk, skip
-                    if chunk_queue.currently_meshing.contains_key(&chunk.pos) {
-                        continue;
-                    }
-                    to_mesh.push_back(chunk);
-                }
-            }
-        }
-    }
 
-    while !to_mesh.is_empty() {
+    for (entity, chunk) in needs_mesh.iter() {
+        if chunk_queue.currently_meshing.contains_key(&chunk.pos) {
+            continue;
+        }
+
+
         // create a new mesh
 
         //TODO: check if neighbors are in cache, if not - can't mesh.
 
-        let chunk = to_mesh.pop_front().unwrap();
         let north = chunk_cache.get_chunk(chunk.pos + ivec3(0, 0, 1));
         let south = chunk_cache.get_chunk(chunk.pos + ivec3(0, 0, -1));
         let east = chunk_cache.get_chunk(chunk.pos + ivec3(1, 0, 0));
         let west = chunk_cache.get_chunk(chunk.pos + ivec3(-1, 0, 0));
-        if let (Some(north), Some(south), Some(east), Some(west)) = (north, south, east, west) {
+        let up = chunk_cache.get_chunk(chunk.pos + ivec3(0, 1, 0));
+        let down = chunk_cache.get_chunk(chunk.pos + ivec3(0, -1, 0));
+        if let (Some(north), Some(south), Some(east), Some(west), Some(up), Some(down)) = (north, south, east, west, up, down) {
 
+
+            commands.entity(entity).remove::<ChunkNeedsMeshing>();
 
             let cache = mesh_cache.clone();
             let chunk_arc = chunk.borrow_data();
@@ -301,6 +328,8 @@ fn queue_mesh_creation(
             let south_arc = q_chunks.get(south).unwrap().borrow_data();
             let east_arc = q_chunks.get(east).unwrap().borrow_data();
             let west_arc = q_chunks.get(west).unwrap().borrow_data();
+            let up_arc = q_chunks.get(up).unwrap().borrow_data();
+            let down_arc = q_chunks.get(down).unwrap().borrow_data();
 
             let task = AsyncComputeTaskPool::get().spawn(async move {
                 // read the data
@@ -309,22 +338,44 @@ fn queue_mesh_creation(
                 let south_data = south_arc.read().unwrap();
                 let east_data = east_arc.read().unwrap();
                 let west_data = west_arc.read().unwrap();
+                let up_data = up_arc.read().unwrap();
+                let down_data = down_arc.read().unwrap();
                 let neighbors: chunk::NeighborData = (
                     &north_data,
                     &south_data,
                     &east_data,
                     &west_data,
-                    //TODO: Up and down!
-                    &west_data,
-                    &west_data,
+                    &up_data,
+                    &down_data,
                 );
 
-                // create the mesh
-                chunk::create_chunk_mesh(&data, &cache, Some(neighbors))
+
+                if data.is_empty() {
+                    None
+                }
+                else {
+                    // create the mesh
+                    Some(chunk::create_chunk_mesh(&data, &cache, Some(neighbors)))
+                }
+
             });
             chunk_queue.currently_meshing.insert(chunk.pos, task);
         }
+
     }
+
+
+
+        // let cache = mesh_cache.clone();
+        // let chunk_arc = chunk.borrow_data();
+        // let task = AsyncComputeTaskPool::get().spawn(async move {
+        //     let data = chunk_arc.read().unwrap();
+        //     chunk::create_chunk_mesh(&data, &cache, None)
+        // });
+        // if chunk_queue.currently_meshing.contains_key(&chunk.pos) {
+        //     panic!("Submitting a mesh task that has already been submitted for chunk {}", chunk.pos);
+        // }
+        // chunk_queue.currently_meshing.insert(chunk.pos, task);
 }
 
 
@@ -368,14 +419,27 @@ fn temp_create_chunk(
 
     if kb_input.just_pressed(KeyCode::KeyX) {
         info!("Loading chunks...");
+        let mut i = 0;
         for x in -10..11 {
             for z in -10..11 {
-                let task = AsyncComputeTaskPool::get().spawn(async move {
-                    make_data_chaos()
-                });
-                chunk_queue.currently_generating.insert(ivec3(x, 0, z), task);
+                for y in -1..2 {
+                    
+                    let task = if y == 0 {
+                        AsyncComputeTaskPool::get().spawn(async move {
+                            make_data_chaos()
+                        })
+                    }
+                    else {
+                        AsyncComputeTaskPool::get().spawn(async move {
+                            ChunkData::empty()
+                        })
+                    };
+                    chunk_queue.currently_generating.insert(ivec3(x, y, z), task);
+                    i += 1;
+                }
             }
         }
+        info!("Created {i} chunk tasks.");
     }
 }
 

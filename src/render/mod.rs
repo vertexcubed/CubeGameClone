@@ -17,6 +17,8 @@ use crate::registry::block::BlockRegistry;
 use crate::render::material::BlockMaterial;
 
 pub mod material;
+pub mod pipeline;
+mod chunk_mesh;
 
 #[derive(Default)]
 pub struct GameRenderPlugin;

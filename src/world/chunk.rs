@@ -13,6 +13,7 @@ use bitvec::prelude::BitVec;
 use std::string::ToString;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
+use bitvec::bitvec;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PaletteEntry {
@@ -55,28 +56,20 @@ pub struct ChunkComponent {
     // data may be read by multiple threads, but only modified by one thread
     data: Arc<RwLock<ChunkData>>,
     pub pos: IVec3,
-    pub mesh_status: ChunkMeshStatus,
 }
 impl ChunkComponent {
     pub fn new(pos: IVec3, data: ChunkData) -> Self {
         Self {
             data: Arc::new(RwLock::new(data)),
             pos,
-            mesh_status: ChunkMeshStatus::None,
         }
     }
     pub fn borrow_data(&self) -> Arc<RwLock<ChunkData>> {
         self.data.clone()
     }
 }
-
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub enum ChunkMeshStatus {
-    #[default]
-    None,
-    Meshed,
-    NeedsReMeshing,
-}
+#[derive(Default, Debug, Component)]
+pub struct ChunkNeedsMeshing;
 
 
 
@@ -90,9 +83,11 @@ pub struct ChunkData {
     pub id_size: usize,
     // for now we'll do a vector of strings - later this will be a better id form
     palette: Vec<PaletteEntry>,
-
     // vec is heap allocated so this is fine
-    pub data: BitVec
+    pub data: BitVec,
+
+    // if this is some: chunk is just one block. Can be air.
+    is_single: bool,
 }
 impl ChunkData {
 
@@ -113,11 +108,39 @@ impl ChunkData {
         ChunkData {
             id_size,
             palette,
-            data
+            data,
+            is_single: false,
         }
     }
 
+    pub fn single(id: &str) -> Self {
+        let palette = vec![
+            PaletteEntry::new(id),
+        ];
 
+        ChunkData {
+            id_size: 1,
+            data: BitVec::new(),
+            palette,
+            is_single: true
+        }
+    }
+    pub fn empty() -> Self {
+        ChunkData {
+            id_size: 1,
+            data: BitVec::new(),
+            palette: Vec::new(),
+            is_single: true,
+        }
+    }
+    
+    pub fn is_single(&self) -> bool {
+        self.is_single
+    }
+    
+    pub fn is_empty(&self) -> bool {
+        self.is_single && self.palette.is_empty()
+    }
 
     // there are 32768 blocks in a chunk, so 32768 possible states. Could be stored in a u16 but eh.
     pub fn block_at(&self, x: usize, y: usize, z: usize) -> usize {
@@ -140,6 +163,11 @@ impl ChunkData {
         // This will point to the first bit of our id, then we read the next ID_SIZE bits.
         let scaled_index = index * self.id_size;
 
+        // if single we just return either 1 (first palette id) or 0 if it's empty (air).
+        if self.is_single {
+            return self.palette.len();
+        };
+        
         block_at_raw(&self.data, self.id_size, scaled_index)
     }
 
@@ -181,6 +209,30 @@ impl ChunkData {
         if x >= Self::CHUNK_SIZE || y >= Self::CHUNK_SIZE || z >= Self::CHUNK_SIZE {
             return Err(ChunkError::new("Index {x}, {y}, {z} is out of bounds."));
         }
+        
+        // single block? not anymore!
+        let has_to_expand = if self.is_empty() {
+            block != "air"
+        } else {
+            self.palette[0].block_name != block
+        };
+        if !has_to_expand {
+            // no changes since we've set the block to the one block this chunk is entirely
+            return Ok(block.to_string());
+        }
+        
+        if self.is_single {
+            // need to make data now - since we're setting block lol.
+            self.is_single = false;
+            // fill with either 0 (air) or 1 (first palette entry)
+            self.data = bitvec![self.palette.len(); Self::BLOCKS_PER_CHUNK];
+            if !self.is_empty() {
+                // if all one block, set the ref count to.. everything.
+                self.palette[0].ref_count = Self::BLOCKS_PER_CHUNK as u16;
+            }
+        }
+        
+        
         let old_block = self.block_at(x, y, z);
         let index = xyz_to_index(x, y, z);
 
@@ -343,23 +395,16 @@ pub fn create_chunk_mesh(
     let mut indices = Vec::<u32>::new();
     let mut face_ids = Vec::<u32>::new();
 
-
-    // TODO: this clone might be expensive - consider just doing a normal iter?
-    // This would probably be 4096 * id_size bytes in size which can add up fast.
-    // TBF it is discarded soon after so it's not the worst but yeah
-    let mut working_data = chunk.data.clone();
-
-    let after_clone = now.elapsed().as_secs_f64();
-
+    
     // make sure that index points to the first bit of the id.
     // let mut index = (working_data.leading_zeros() / chunk.id_size) * chunk.id_size;
     // debug!("Length of working_data: {}", working_data.len());
 
+    //TODO: optimize in the case of single chunks (chunks made up of just one block)
     
     for i in 0..ChunkData::BLOCKS_PER_CHUNK {
-        let scaled_index = i * chunk.id_size;
 
-        let id = block_at_raw(&working_data, chunk.id_size, scaled_index);
+        let id = chunk.block_at_index(i);
 
         if id == 0 {
             continue;
@@ -551,11 +596,10 @@ fn should_make_face(facing: Facing, chunk: &ChunkData, x: usize, y: usize, z: us
             east.block_at(0, new_y as usize, new_z as usize)
         }
         else if new_y < 0 {
-            // temporary
-            return true;
+            down.block_at(new_x as usize, last, new_z as usize)
         }
         else if new_y > last as isize {
-            return true;
+            up.block_at(new_x as usize, 0, new_z as usize)
         }
         else {
             chunk.block_at(new_x as usize, new_y as usize, new_z as usize)
