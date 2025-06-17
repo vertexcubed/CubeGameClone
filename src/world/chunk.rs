@@ -5,7 +5,7 @@ use crate::registry::block::BlockRegistry;
 use crate::render::material::BlockMaterial;
 use crate::render::MeshDataCache;
 use bevy::asset::{Assets, RenderAssetUsages};
-use bevy::math::{vec3, Vec3};
+use bevy::math::{ivec3, vec3, Vec3};
 use bevy::prelude::{debug, info, Component, IVec3, Mesh, Res, Transform};
 use bevy::render::mesh::{Indices, MeshVertexAttribute, PrimitiveTopology, VertexFormat};
 use bitvec::field::BitField;
@@ -14,6 +14,8 @@ use std::string::ToString;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 use bitvec::bitvec;
+use bitvec::order::Msb0;
+use bitvec::view::BitViewSized;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PaletteEntry {
@@ -66,6 +68,16 @@ impl ChunkComponent {
     }
     pub fn borrow_data(&self) -> Arc<RwLock<ChunkData>> {
         self.data.clone()
+    }
+
+    pub fn set_block(&mut self, pos: IVec3, block: &str) -> Result<String, ChunkError> {
+        let mut write = self.data.write().unwrap();
+        write.set_block(pos.x as usize, pos.y as usize, pos.z as usize, block)
+    }
+
+    pub fn get_block(&self, pos: IVec3) -> String {
+        let read = self.data.read().unwrap();
+        read.get_block(pos.x as usize, pos.y as usize, pos.z as usize)
     }
 }
 #[derive(Default, Debug, Component)]
@@ -205,23 +217,40 @@ impl ChunkData {
         self.palette.len() - 1
     }
 
+    pub fn get_block(&self, x: usize, y: usize, z: usize) -> String {
+        let id = self.block_at(x, y, z);
+        if id == 0 {
+            String::from("air")
+        }
+        else {
+            self.palette[id - 1].block_name.clone()
+        }
+    }
+
+
+
     pub fn set_block(&mut self, x: usize, y: usize, z: usize, block: &str) -> Result<String, ChunkError> {
         if x >= Self::CHUNK_SIZE || y >= Self::CHUNK_SIZE || z >= Self::CHUNK_SIZE {
-            return Err(ChunkError::new("Index {x}, {y}, {z} is out of bounds."));
+            let message = format!("Index {x}, {y}, {z} is out of bounds.");
+            return Err(ChunkError::new(message.as_str()));
         }
         
-        // single block? not anymore!
-        let has_to_expand = if self.is_empty() {
-            block != "air"
-        } else {
-            self.palette[0].block_name != block
-        };
-        if !has_to_expand {
-            // no changes since we've set the block to the one block this chunk is entirely
-            return Ok(block.to_string());
-        }
+
+
         
         if self.is_single {
+            // single block? not anymore!
+            let has_to_expand = if self.is_empty() {
+                block != "air"
+            } else {
+                self.palette[0].block_name != block
+            };
+            if !has_to_expand {
+                // no changes since we've set the block to the one block this chunk is entirely
+                println!("No changes, chunk is single");
+                return Ok(block.to_string());
+            }
+
             // need to make data now - since we're setting block lol.
             self.is_single = false;
             // fill with either 0 (air) or 1 (first palette entry)
@@ -248,25 +277,38 @@ impl ChunkData {
         else {
             String::from("air")
         };
+
+        
+        println!("Block to place: {}", block);
+        println!("Palette: {:?}", self.palette);
         // check the palette to see if this block already is in it (including free ones!)
-        for block_id in 0..self.palette.len() {
-            let mut p = &mut self.palette[block_id - 1];
+        for palette_idx in 0..self.palette.len() {
+            let mut p = &mut self.palette[palette_idx];
             // block is already in the palette. TODO: update for blockstates.
             if p.block_name == block {
                 p.ref_count += 1;
 
+                println!("Found stone: index: {}", palette_idx);
+                println!("Old id: {}", old_block);
+                
                 // actually does the bit setting operation
-                set_raw(&mut self.data, self.id_size, index * self.id_size, block_id);
+                
+                println!("Old data: {}", &self.data[index * self.id_size..index * self.id_size + self.id_size]);
+                
+                set_raw(&mut self.data, self.id_size, index * self.id_size, palette_idx + 1);
+
+                println!("New data: {}", &self.data[index * self.id_size..index * self.id_size + self.id_size]);
+
                 return Ok(ret);
             }
         }
         // block is not in the palette, add it to the palette.
         let block_id = self.add_palette(PaletteEntry::new(block));
         // increase palette's refcount
-        self.palette[block_id - 1].ref_count += 1;
+        self.palette[block_id].ref_count += 1;
 
         //update the raw data
-        set_raw(&mut self.data, self.id_size, index * self.id_size, block_id);
+        set_raw(&mut self.data, self.id_size, index * self.id_size, block_id + 1);
 
         //return old block.
         Ok(ret)
@@ -332,8 +374,12 @@ fn block_at_raw(data: &BitVec, id_size: usize, scaled_index: usize) -> usize {
 }
 
 fn set_raw(data: &mut BitVec, id_size: usize, scaled_index: usize, value: usize) {
-    // unecessary zeros will be trimmed off.
-    data[scaled_index..scaled_index + id_size].store(value);
+    
+    let arr = value.into_bitarray::<Msb0>();
+    let slice = &arr[size_of::<usize>() * 8 - id_size..size_of::<usize>() * 8];
+    for i in 0..id_size {
+        data.set(scaled_index + i, slice[i]);
+    }
 }
 
 fn index_to_xyz(i: usize) -> (usize, usize, usize) {
@@ -351,8 +397,20 @@ fn xyz_to_index(x: usize, y: usize, z: usize) -> usize {
 }
 
 
-pub fn pos_to_transform(pos: IVec3) -> Transform {
+pub fn chunk_pos_to_transform(pos: IVec3) -> Transform {
     Transform::from_xyz((pos.x * ChunkData::CHUNK_SIZE as i32) as f32, (pos.y * ChunkData::CHUNK_SIZE as i32) as f32, (pos.z * ChunkData::CHUNK_SIZE as i32) as f32)
+}
+pub fn transform_to_chunk_pos(transform: &Transform) -> IVec3 {
+    let vec = transform.translation;
+    pos_to_chunk_pos(vec.as_ivec3())
+}
+pub fn pos_to_chunk_pos(pos: IVec3) -> IVec3 {
+    let vec = pos.as_vec3();
+    ivec3((vec.x / ChunkData::CHUNK_SIZE as f32).floor() as i32, (vec.y / ChunkData::CHUNK_SIZE as f32).floor() as i32, (vec.z / ChunkData::CHUNK_SIZE as f32).floor() as i32)
+}
+
+pub fn pos_to_chunk_local(pos: IVec3) -> IVec3 {
+    pos - (32 * pos_to_chunk_pos(pos))
 }
 
 //===============

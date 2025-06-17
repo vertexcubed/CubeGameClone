@@ -40,8 +40,8 @@ impl Plugin for WorldPlugin {
 
             .add_systems(Update, (handle_input, ))
             .add_systems(FixedUpdate, queue_mesh_creation)
-            .add_systems(Update, (temp_create_chunk, receive_generated_chunks, create_chunk_entities))
-            .add_systems(Update, (receive_generated_meshes, upload_meshes, create_materials))
+            .add_systems(Update, (temp_create_chunk, temp_set_block, receive_generated_chunks, create_chunk_entities))
+            .add_systems(Update, (receive_generated_meshes, upload_meshes))
             .add_systems(OnEnter(MainGameState::InGame), (setup, grab_cursor, create_world))
         ;
     }
@@ -148,15 +148,26 @@ fn setup(
     ));
 }
 
-#[derive(Component, Debug, Default)]
-pub struct GameWorld;
+#[derive(Component)]
+pub struct GameWorld {
+    pub generator_func: Arc<dyn Fn(IVec3) -> ChunkData + Send + Sync>
+}
+impl Default for GameWorld {
+    fn default() -> Self {
+        Self {
+            generator_func: Arc::new(|i| {
+                make_box()
+            })
+        }
+    }
+}
 
 
 fn create_world(
     mut commands: Commands,
 ) {
     commands.spawn((
-        GameWorld,
+        GameWorld::default(),
         ChunkCache::default(),
         ChunkQueue::default(),
         ));
@@ -209,7 +220,7 @@ fn create_chunk_entities(
 
         let e = commands.spawn((
             Visibility::Visible,
-            chunk::pos_to_transform(coord),
+            chunk::chunk_pos_to_transform(coord),
             ChunkComponent::new(coord, data),
             ChunkNeedsMeshing
         )).id();
@@ -248,18 +259,17 @@ fn receive_generated_meshes(
 // how many MiB per frame can we upload to the GPU? Default 1.
 const MIB_PER_FRAME: i32 = 1024 * 1024 * 1;
 
-
 #[derive(Component)]
-pub struct MeshRef(pub Arc<Handle<Mesh>>);
+pub struct ChunkMeshMarker;
 
-#[derive(Component)]
-pub struct NeedsMaterial;
 
 fn upload_meshes(
     mut commands: Commands,
     world: Single<(&mut ChunkQueue, &mut ChunkCache)>,
-    mut q_chunks: Query<&mut ChunkComponent>,
+    q_children: Query<&Children, With<ChunkComponent>>,
+    q_chunk_meshes: Query<&ChunkMeshMarker>,
     mut meshes: ResMut<Assets<Mesh>>,
+    block_textures: Res<BlockTextures>,
 ) {
     let (mut chunk_queue, chunk_cache) = world.into_inner();
 
@@ -293,38 +303,37 @@ fn upload_meshes(
 
         // println!("Coord: {}, count: {}", coord, counter.count);
 
-        let entity = chunk_cache.get_chunk(coord).expect("Can't remesh chunk that isn't in memory!");
+        let chunk_entity = chunk_cache.get_chunk(coord).expect("Can't remesh chunk that isn't in memory!");
         // let mut component = q_chunks.get_mut(entity).expect("Invalid entity id");
-
-        // will replace the mesh if it already has one.
-        let mesh_ref = MeshRef(Arc::new(meshes.add(mesh)));
-
-        let child = commands.spawn((
-            Visibility::Inherited,
-            // chunk::pos_to_transform(coord),
-            mesh_ref,
-            NeedsMaterial,
-        )).id();
-
-
-        commands.entity(entity).add_child(child);
-        // counter.count += 1;
+        
+        
+        
+        // create the mesh handle
+        let mesh_handle = meshes.add(mesh);
+        
+        let mut needs_new_mesh = true;
+        // chunk may or may not already have a mesh.
+        if let Ok(children) = q_children.get(chunk_entity) {
+            //iter over all the children.
+            for child in children.iter() {
+                // does this child have a mesh?
+                if q_chunk_meshes.contains(child) {
+                    commands.entity(child).insert(Mesh3d(mesh_handle.clone()));
+                    needs_new_mesh = false;
+                }
+            }
+        }
+        if needs_new_mesh {
+            let child = commands.spawn((
+                    Visibility::Inherited,
+                    Mesh3d(mesh_handle.clone()),
+                    ChunkMeshMarker,
+                    MeshMaterial3d(block_textures.material.clone()),
+                )).id();
+            
+                commands.entity(chunk_entity).add_child(child);
+        }
         hard_process_limit -= to_sub as i32;
-    }
-}
-
-fn create_materials(
-    mut commands: Commands,
-    mut chunks: Query<(Entity, &MeshRef), With<NeedsMaterial>>,
-    block_textures: Res<BlockTextures>,
-) {
-    for (entity, mesh_ref) in chunks.iter_mut() {
-        commands
-            .entity(entity)
-            .insert(Mesh3d((*mesh_ref.0).clone()))
-            .insert(MeshMaterial3d(block_textures.material.clone()))
-            .remove::<NeedsMaterial>()
-        ;
     }
 }
 
@@ -426,24 +435,15 @@ fn queue_mesh_creation(
 struct StartedGenerating(bool);
 
 fn temp_create_chunk(
-    mut chunk_queue: Single<&mut ChunkQueue>,
+    camera: Single<&Transform, With<MainCamera>>,
+    mut world: Single<(&GameWorld, &mut ChunkQueue, &ChunkCache)>,
     kb_input: Res<ButtonInput<KeyCode>>,
     mut started_generating: ResMut<StartedGenerating>,
 ) {
-    // if kb_input.just_pressed(KeyCode::KeyX) {
-    //
-    //     let task = AsyncComputeTaskPool::get().spawn(async move {
-    //         // let now = Instant::now();
-    //         let ret = make_data();
-    //         // let elapsed = now.elapsed().as_secs_f64();
-    //         // info!("Created chunk data. Took {} seconds,", elapsed);
-    //         ret
-    //     });
-    //     chunk_queue.currently_generating.insert(ivec3(chunk_spawner.x, 0, chunk_spawner.z), task);
-    //
-    //     chunk_spawner.x += 1;
-    //     // chunk_spawner.z += 1;
-    // }
+    let (game_world, mut chunk_queue, chunk_cache) = world.into_inner();
+
+    let camera_chunk = chunk::transform_to_chunk_pos(&camera);
+
 
     let rad = 5;
 
@@ -453,10 +453,16 @@ fn temp_create_chunk(
         for x in -rad..rad + 1 {
             for z in -rad..rad + 1 {
                 for y in -rad..rad + 1 {
+                    let coord = ivec3(x, y, z) + camera_chunk;
+                    if chunk_cache.get_chunk(coord).is_some() {
+                        continue;
+                    }
+
+                    let func = game_world.generator_func.clone();
                     let task = AsyncComputeTaskPool::get().spawn(async move {
-                        make_box()
+                        func(coord)
                     });
-                    chunk_queue.currently_generating.insert(ivec3(x, y, z), task);
+                    chunk_queue.currently_generating.insert(coord, task);
                     i += 1;
                 }
             }
@@ -466,6 +472,53 @@ fn temp_create_chunk(
     }
 }
 
+
+fn temp_set_block(
+    mut commands: Commands,
+    mut q_chunks: Query<&mut ChunkComponent>,
+    world: Single<(&GameWorld, &ChunkQueue, &ChunkCache)>,
+    kb_input: Res<ButtonInput<KeyCode>>,
+    camera: Single<&Transform, With<MainCamera>>,
+) {
+    let (game_world, chunk_queue, chunk_cache) = world.into_inner();
+
+    if kb_input.just_pressed(KeyCode::KeyV) {
+        let camera_chunk = chunk::transform_to_chunk_pos(&camera);
+        let pos = camera.translation.as_ivec3();
+        let pos_in_chunk = chunk::pos_to_chunk_local(pos);
+        info!("Pos: {}, camera chunk: {}, pos in chunk: {}", pos, camera_chunk, pos_in_chunk);
+    }
+
+
+    if kb_input.just_pressed(KeyCode::KeyC) {
+        // chunk coord of camera
+        let camera_chunk = chunk::transform_to_chunk_pos(&camera);
+        let pos = camera.translation.as_ivec3();
+
+        let pos_in_chunk = chunk::pos_to_chunk_local(pos);
+        if let Some(entity) = chunk_cache.get_chunk(camera_chunk) {
+            let mut component = q_chunks.get_mut(entity).unwrap();
+
+            info!("Old: {}", component.get_block(pos_in_chunk));
+
+            match component.set_block(pos_in_chunk, "stone") {
+                Ok(old) => {
+                    info!("Set block at {}. Old: {}", pos, old);
+                    commands.entity(entity).insert(ChunkNeedsMeshing);
+                }
+                Err(e) => {
+                    error!("Failed to set block at {}: {:?}", pos, e);
+                }
+            }
+
+            info!("New: {}", component.get_block(pos_in_chunk));
+
+        }
+        else {
+            info!("Can't set block at {}, chunk not in cache.", pos);
+        }
+    }
+}
 
 
 fn make_data() -> ChunkData {
