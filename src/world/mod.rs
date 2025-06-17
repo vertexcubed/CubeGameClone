@@ -36,12 +36,12 @@ impl Plugin for WorldPlugin {
         app
             .init_resource::<CameraSettings>()
             // temp
-            .init_resource::<ChunkSpawner>()
+            .init_resource::<StartedGenerating>()
 
             .add_systems(Update, (handle_input, ))
             .add_systems(FixedUpdate, queue_mesh_creation)
-            .add_systems(Update, (temp_create_chunk, receive_generated_chunks, create_chunk_entities).chain())
-            .add_systems(Update, (receive_generated_meshes, upload_meshes).chain())
+            .add_systems(Update, (temp_create_chunk, receive_generated_chunks, create_chunk_entities))
+            .add_systems(Update, (receive_generated_meshes, upload_meshes, create_materials))
             .add_systems(OnEnter(MainGameState::InGame), (setup, grab_cursor, create_world))
         ;
     }
@@ -115,6 +115,8 @@ fn setup(
     block_data_cache: Res<MeshDataCache>,
     block_textures: Res<BlockTextures>,
     camera_settings: Res<CameraSettings>,
+
+    mut materials: ResMut<Assets<StandardMaterial>>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
     info!("Loading world...");
@@ -136,6 +138,13 @@ fn setup(
     commands.spawn((
         DirectionalLight::default(),
         Transform::from_xyz(25.0, 50.0, 10.0).looking_at(Vec3::ZERO, Vec3::Y)
+    ));
+
+    // just so i can see a reference to 0 0 0
+    commands.spawn((
+        Transform::from_xyz(0.0, 0.0, 0.0),
+        MeshMaterial3d(materials.add(Color::srgb(1.0, 0.0, 0.0))),
+        Mesh3d(meshes.add(Sphere {radius: 3.0}.mesh())),
     ));
 }
 
@@ -190,20 +199,26 @@ fn receive_generated_chunks(
 fn create_chunk_entities(
     mut commands: Commands,
     mut world: Single<(&mut ChunkQueue, &mut ChunkCache)>,
-    block_textures: Res<BlockTextures>
+    mut started_generating: ResMut<StartedGenerating>,
 ) {
     let (mut chunk_queue, mut chunk_cache) = world.into_inner();
 
+    let mut print = false;
     while !chunk_queue.finished_generating.is_empty() {
         let (coord, data) = chunk_queue.finished_generating.pop_front().unwrap();
 
         let e = commands.spawn((
+            Visibility::Visible,
             chunk::pos_to_transform(coord),
-            MeshMaterial3d(block_textures.material.clone()),
             ChunkComponent::new(coord, data),
             ChunkNeedsMeshing
         )).id();
         chunk_cache.add_to_cache(coord, e);
+        print = true;
+    }
+    if print && chunk_queue.currently_generating.is_empty() && started_generating.0 {
+        println!("Finished generating chunks.");
+        started_generating.0 = false;
     }
 }
 
@@ -230,16 +245,15 @@ fn receive_generated_meshes(
     }
 }
 
-const HARD_LIMIT: i32 = 5;
-const SCALE: i32 = 175000;
+// how many MiB per frame can we upload to the GPU? Default 1.
+const MIB_PER_FRAME: i32 = 1024 * 1024 * 1;
 
-const fn limit_scale(indices_size: i32) -> i32 {
-    let mut y = indices_size - 10000;
-    // clamp to 0 to avoid sqrting a negative number.
-    if y < 0 { y = 0; }
-    (y / (SCALE / HARD_LIMIT)).isqrt()
-}
 
+#[derive(Component)]
+pub struct MeshRef(pub Arc<Handle<Mesh>>);
+
+#[derive(Component)]
+pub struct NeedsMaterial;
 
 fn upload_meshes(
     mut commands: Commands,
@@ -256,23 +270,26 @@ fn upload_meshes(
 
 
     // let mut new_entities = Vec::new();
-    let mut hard_process_limit = HARD_LIMIT;
+    let mut hard_process_limit = MIB_PER_FRAME;
     while !chunk_queue.finished_meshing.is_empty() && hard_process_limit > 0 {
 
         let (coord, mesh) = chunk_queue.finished_meshing.pop_front().unwrap();
-        
+
         // air - we don't need to make a mesh and can just move on
         if mesh.is_none() {
             continue;
         }
-        
+
         let mesh = mesh.unwrap();
-        
-        let mesh_size = mesh.indices().unwrap().len();
-        
-        // scales the amount of "work" done by how complex this mesh is
-        // if the mesh is very complex, less meshes will be uploaded this frame.
-        let to_sub = limit_scale(mesh_size as i32);
+
+
+        // println!("Indices: {mesh_size}");
+
+        // println!("Buffer size: {}, vertex size: {}, num vertices: {}", mesh.get_vertex_buffer_size(), mesh.get_vertex_size(), mesh.count_vertices());
+
+        // scales the amount of "work" done by how big this mesh is
+        // if the mesh is very big, less meshes will be uploaded this frame.
+        let to_sub = mesh.get_vertex_buffer_size();
 
         // println!("Coord: {}, count: {}", coord, counter.count);
 
@@ -280,11 +297,38 @@ fn upload_meshes(
         // let mut component = q_chunks.get_mut(entity).expect("Invalid entity id");
 
         // will replace the mesh if it already has one.
-        commands.entity(entity).insert(Mesh3d(meshes.add(mesh)));
+        let mesh_ref = MeshRef(Arc::new(meshes.add(mesh)));
+
+        let child = commands.spawn((
+            Visibility::Inherited,
+            // chunk::pos_to_transform(coord),
+            mesh_ref,
+            NeedsMaterial,
+        )).id();
+
+
+        commands.entity(entity).add_child(child);
         // counter.count += 1;
-        hard_process_limit -= i32::max(1, to_sub);
+        hard_process_limit -= to_sub as i32;
     }
 }
+
+fn create_materials(
+    mut commands: Commands,
+    mut chunks: Query<(Entity, &MeshRef), With<NeedsMaterial>>,
+    block_textures: Res<BlockTextures>,
+) {
+    for (entity, mesh_ref) in chunks.iter_mut() {
+        commands
+            .entity(entity)
+            .insert(Mesh3d((*mesh_ref.0).clone()))
+            .insert(MeshMaterial3d(block_textures.material.clone()))
+            .remove::<NeedsMaterial>()
+        ;
+    }
+}
+
+
 
 
 fn queue_mesh_creation(
@@ -378,29 +422,13 @@ fn queue_mesh_creation(
         // chunk_queue.currently_meshing.insert(chunk.pos, task);
 }
 
-
-
-
-#[derive(Resource, Debug, Clone)]
-struct ChunkSpawner {
-    data: ChunkData,
-    x: i32,
-    z: i32
-}
-impl Default for ChunkSpawner {
-    fn default() -> Self {
-        Self {
-            data: make_data_chaos(),
-            x: 1,
-            z: 1
-        }
-    }
-}
+#[derive(Default, Copy, Clone, Debug, Resource)]
+struct StartedGenerating(bool);
 
 fn temp_create_chunk(
     mut chunk_queue: Single<&mut ChunkQueue>,
-    mut chunk_spawner: ResMut<ChunkSpawner>,
     kb_input: Res<ButtonInput<KeyCode>>,
+    mut started_generating: ResMut<StartedGenerating>,
 ) {
     // if kb_input.just_pressed(KeyCode::KeyX) {
     //
@@ -417,29 +445,24 @@ fn temp_create_chunk(
     //     // chunk_spawner.z += 1;
     // }
 
+    let rad = 5;
+
     if kb_input.just_pressed(KeyCode::KeyX) {
         info!("Loading chunks...");
         let mut i = 0;
-        for x in -10..11 {
-            for z in -10..11 {
-                for y in -1..2 {
-                    
-                    let task = if y == 0 {
-                        AsyncComputeTaskPool::get().spawn(async move {
-                            make_data_chaos()
-                        })
-                    }
-                    else {
-                        AsyncComputeTaskPool::get().spawn(async move {
-                            ChunkData::empty()
-                        })
-                    };
+        for x in -rad..rad + 1 {
+            for z in -rad..rad + 1 {
+                for y in -rad..rad + 1 {
+                    let task = AsyncComputeTaskPool::get().spawn(async move {
+                        make_box()
+                    });
                     chunk_queue.currently_generating.insert(ivec3(x, y, z), task);
                     i += 1;
                 }
             }
         }
         info!("Created {i} chunk tasks.");
+        started_generating.0 = true;
     }
 }
 
@@ -522,4 +545,49 @@ pub fn make_data_chaos() -> ChunkData {
 
 
     ChunkData::new(vec, palette)
+}
+
+
+pub fn make_box() -> ChunkData {
+    let mut palette = vec![
+        PaletteEntry::new("stone"),
+        PaletteEntry::new("dirt"),
+        PaletteEntry::new("oak_planks"),
+        // PaletteEntry::new("diamond_ore"),
+        // PaletteEntry::new("iron_ore"),
+    ];
+
+
+    let id_size = ((palette.len() + 1) as f32).log2().ceil() as usize;
+
+    let mut vec = BitVec::with_capacity(id_size * 32768);
+    let mut rng = rand::rng();
+    for x in 0..32 {
+        for y in 0..32 {
+            for z in 0..32 {
+                let id = if 12 <= x && x <= 19 && 12 <= y && y <= 19 {
+                    rng.sample(Uniform::new(1, palette.len() + 1).unwrap())
+                }
+                else {
+                    0
+                };
+
+                if id != 0 {
+                    palette[id - 1].increment_ref_count();
+                }
+                let arr = id.into_bitarray::<Msb0>();
+                // println!("Bitarray: {}", arr);
+
+                let slice = &arr[size_of::<usize>() * 8 - id_size..size_of::<usize>() * 8];
+                // println!("Slice: {}", slice);
+                // println!("Generated num: {}", rand_id);
+
+                vec.append(&mut slice.to_bitvec());
+            }
+        }
+    }
+
+
+    ChunkData::new(vec, palette)
+
 }
