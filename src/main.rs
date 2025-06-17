@@ -3,6 +3,7 @@ mod core;
 mod registry;
 mod world;
 mod render;
+mod ui;
 
 use render::material::BlockMaterial;
 use crate::registry::RegistryPlugin;
@@ -10,6 +11,7 @@ use crate::world::WorldPlugin;
 use asset::AssetPlugin;
 use bevy::asset::RenderAssetUsages;
 use bevy::color::palettes::basic::WHITE;
+use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
 use bevy::pbr::wireframe::{WireframeConfig, WireframePlugin};
 use bevy::prelude::*;
 use bevy::render::mesh::{Indices, PrimitiveTopology};
@@ -26,6 +28,7 @@ use rand::Rng;
 use world::chunk::{ChunkData, PaletteEntry};
 use crate::render::GameRenderPlugin;
 use crate::render::pipeline::GameRenderPipelinePlugin;
+use crate::ui::GameUiPlugin;
 
 fn main() {
 
@@ -42,12 +45,16 @@ fn main() {
                 ..default()
             }),
             WireframePlugin::default(),
+            FrameTimeDiagnosticsPlugin::default(),
+            
+            
             CoreGamePlugin::default(),
             AssetPlugin::default(),
             RegistryPlugin::default(),
             WorldPlugin::default(),
             GameRenderPlugin::default(),
             GameRenderPipelinePlugin::default(),
+            GameUiPlugin::default(),
         ))
 
         .run();

@@ -25,8 +25,8 @@ use crate::world::camera::{CameraSettings, MainCamera};
 use crate::world::chunk::{ChunkComponent, ChunkData, ChunkNeedsMeshing, PaletteEntry};
 
 pub mod chunk;
-mod camera;
-mod cache;
+pub mod camera;
+pub mod cache;
 
 #[derive(Default)]
 pub struct WorldPlugin;
@@ -141,11 +141,11 @@ fn setup(
     ));
 
     // just so i can see a reference to 0 0 0
-    commands.spawn((
-        Transform::from_xyz(0.0, 0.0, 0.0),
-        MeshMaterial3d(materials.add(Color::srgb(1.0, 0.0, 0.0))),
-        Mesh3d(meshes.add(Sphere {radius: 3.0}.mesh())),
-    ));
+    // commands.spawn((
+    //     Transform::from_xyz(0.0, 0.0, 0.0),
+    //     MeshMaterial3d(materials.add(Color::srgb(1.0, 0.0, 0.0))),
+    //     Mesh3d(meshes.add(Sphere {radius: 3.0}.mesh())),
+    // ));
 }
 
 #[derive(Component)]
@@ -305,12 +305,12 @@ fn upload_meshes(
 
         let chunk_entity = chunk_cache.get_chunk(coord).expect("Can't remesh chunk that isn't in memory!");
         // let mut component = q_chunks.get_mut(entity).expect("Invalid entity id");
-        
-        
-        
+
+
+
         // create the mesh handle
         let mesh_handle = meshes.add(mesh);
-        
+
         let mut needs_new_mesh = true;
         // chunk may or may not already have a mesh.
         if let Ok(children) = q_children.get(chunk_entity) {
@@ -330,7 +330,7 @@ fn upload_meshes(
                     ChunkMeshMarker,
                     MeshMaterial3d(block_textures.material.clone()),
                 )).id();
-            
+
                 commands.entity(chunk_entity).add_child(child);
         }
         hard_process_limit -= to_sub as i32;
@@ -489,6 +489,18 @@ fn temp_set_block(
         info!("Pos: {}, camera chunk: {}, pos in chunk: {}", pos, camera_chunk, pos_in_chunk);
     }
 
+    if kb_input.just_pressed(KeyCode::KeyB) {
+        let center = IVec3::ZERO;
+
+        let pos1 = ivec3(0, 0, 0);
+        let pos2 = ivec3(1, 0, 0);
+        if let Some(entity) = chunk_cache.get_chunk(center) {
+            let mut component = q_chunks.get_mut(entity).unwrap();
+            component.set_block(pos1, "oak_planks");
+            component.set_block(pos2, "oak_planks");
+            commands.entity(entity).insert(ChunkNeedsMeshing);
+        }
+    }
 
     if kb_input.just_pressed(KeyCode::KeyC) {
         // chunk coord of camera
