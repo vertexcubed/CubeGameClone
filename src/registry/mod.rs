@@ -9,7 +9,7 @@ pub struct RegistryPlugin;
 impl Plugin for RegistryPlugin {
     fn build(&self, app: &mut App) {
         app
-            .insert_resource(BlockRegistry::default())
+            .insert_resource(BlockRegistry::new())
         
         ;
     }

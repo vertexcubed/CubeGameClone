@@ -3,7 +3,7 @@ use bevy::asset::{AssetServer, Assets, Handle, LoadedFolder, RecursiveDependency
 use bevy::log::error;
 use bevy::prelude::*;
 use crate::{asset, registry};
-use crate::asset::block::Block;
+use crate::asset::block::{BlockDef};
 use crate::core::errors::RegistryError;
 use crate::core::state::{LoadingState, MainGameState};
 use crate::registry::block::BlockRegistry;
@@ -18,6 +18,7 @@ impl Plugin for CoreGamePlugin {
     fn build(&self, app: &mut App) {
         app
             .insert_resource(LoadedFolders::default())
+            .init_resource::<AllBlockDefs>()
             .init_state::<MainGameState>()
             .init_state::<LoadingState>()
             .add_systems(Startup, load_folders)
@@ -32,6 +33,18 @@ impl Plugin for CoreGamePlugin {
 #[derive(Resource, Default)]
 struct LoadedFolders {
     blocks: (Handle<LoadedFolder>, bool)
+}
+
+#[derive(Resource)]
+pub struct AllBlockDefs {
+    pub inner: Vec<Handle<BlockDef>>
+}
+impl Default for AllBlockDefs {
+    fn default() -> Self {
+        Self {
+            inner: Vec::new()
+        }
+    }
 }
 
 
@@ -49,8 +62,9 @@ fn check_loading_blocks(
     asset_server: Res<AssetServer>,
     all_folders: Res<Assets<LoadedFolder>>,
     mut loaded_folders: ResMut<LoadedFolders>,
-    all_blocks: Res<Assets<Block>>,
-    mut block_res: ResMut<BlockRegistry>,
+    all_blocks: Res<Assets<BlockDef>>,
+    block_res: ResMut<BlockRegistry>,
+    mut def_list: ResMut<AllBlockDefs>
 ) {
 
     let (folder_handle, already_loaded) = &loaded_folders.blocks;
@@ -67,9 +81,10 @@ fn check_loading_blocks(
         Some(RecursiveDependencyLoadState::Loaded) => {
 
             // we've loaded all blocks, yay! We can safely unwrap these
-            let block_handles = asset::get_handles_in::<Block>(block_folder);
+            let block_handles = asset::get_handles_in::<BlockDef>(block_folder);
+            def_list.inner = block_handles;
 
-            if let Err(err) = registry::block::load_blocks(all_blocks, block_res, block_handles) {
+            if let Err(err) = registry::block::load_blocks(all_blocks, block_res, def_list.into()) {
                 error!("Error loading blocks: {err}")
             }
 

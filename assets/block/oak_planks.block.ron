@@ -1,5 +1,12 @@
 Block(
     id: "oak_planks",
     hardness: 1,
-    model: "block/oak_planks"
+    states: [],
+    default_state: {},
+    models: [
+        ModelDef(
+            state: {},
+            model: "block/oak_planks"
+        )
+    ]
 )

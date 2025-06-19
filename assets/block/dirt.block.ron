@@ -1,5 +1,12 @@
 Block(
     id: "dirt",
     hardness: 1,
-    model: "block/dirt"
+    states: [],
+    default_state: {},
+    models: [
+        ModelDef(
+            state: {},
+            model: "block/dirt"
+        )
+    ]
 )

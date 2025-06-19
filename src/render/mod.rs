@@ -7,15 +7,17 @@ use bevy::color::palettes::basic::WHITE;
 use bevy::input::ButtonInput;
 use bevy::pbr::MaterialPlugin;
 use bevy::pbr::wireframe::{NoWireframe, WireframeConfig};
-use bevy::prelude::{KeyCode, Mesh3d, NextState, OnEnter, Query, Res, ResMut, Resource, Update, Visibility, With, Without};
+use bevy::prelude::{Commands, KeyCode, Mesh3d, NextState, OnEnter, Query, Res, ResMut, Resource, Update, Visibility, With, Without};
 use bevy::render::mesh::allocator::MeshAllocatorSettings;
 use bevy::render::RenderApp;
 use bevy::utils::default;
-use crate::asset::block::{Block, BlockModel};
+use crate::asset::block::{BlockDef, BlockModel};
 use crate::asset::procedural::BlockTextures;
+use crate::core::AllBlockDefs;
 use crate::core::state::LoadingState;
 use crate::registry::block::BlockRegistry;
 use crate::render::material::BlockMaterial;
+use crate::world::block::BlockState;
 
 pub mod material;
 pub mod pipeline;
@@ -73,7 +75,7 @@ fn toggle_wireframe(
 
 #[derive(Resource, Debug, Clone, Default)]
 pub struct MeshDataCache {
-    pub inner: Arc<ArcSwap<HashMap<String, BlockModelMinimal>>>
+    pub inner: Arc<ArcSwap<HashMap<BlockState, BlockModelMinimal>>>
 }
 
 #[derive(Debug, Clone, Default)]
@@ -86,24 +88,35 @@ pub struct BlockModelMinimal {
 // creates an atomic cache of all block model and texture data.
 // Needed to send to other threads
 fn create_block_data_cache(
+    all_block_defs: Res<AllBlockDefs>,
     mut cache: ResMut<MeshDataCache>,
     block_reg: Res<BlockRegistry>,
-    block_asset: Res<Assets<Block>>,
+    block_asset: Res<Assets<BlockDef>>,
     block_model_asset: Res<Assets<BlockModel>>,
     block_textures: Res<BlockTextures>,
     mut next_load: ResMut<NextState<LoadingState>>
 ) {
     let mut map = HashMap::new();
 
-    for (k, v) in block_reg.iter() {
-        let block = block_asset.get(v).unwrap();
-        let texture = &block_model_asset.get(&block.model_handle).unwrap().texture_handle;
-        let array_id = block_textures.get_texture_id(texture);
-        map.insert(k.clone(), BlockModelMinimal {
-            index: array_id
-        });
+    for h in all_block_defs.inner.iter() {
+        let block = block_asset.get(h).unwrap();
+        for def in block.models.iter() {
+            let texture = &block_model_asset.get(&def.model_handle).unwrap().texture_handle;
+            let array_id = block_textures.get_texture_id(texture);
+
+            let block = block_reg.get_block(block.id.as_str()).unwrap().clone();
+            let state = BlockState {
+                block,
+                state: def.state.clone(),
+            };
+
+            map.insert(state, BlockModelMinimal {
+                index: array_id
+            });
+        }
+
     }
     cache.inner.store(Arc::new(map));
-
+    
     next_load.set(LoadingState::Done);
 }

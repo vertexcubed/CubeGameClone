@@ -1,5 +1,12 @@
 Block(
     id: "stone",
     hardness: 1,
-    model: "block/stone"
+    states: [],
+    default_state: {},
+    models: [
+        ModelDef(
+            state: {},
+            model: "block/stone"
+        )
+    ]
 )

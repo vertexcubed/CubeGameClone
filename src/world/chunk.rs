@@ -1,34 +1,30 @@
-use crate::asset::block::{Block, BlockModel};
-use crate::asset::procedural::BlockTextures;
 use crate::core::errors::ChunkError;
-use crate::registry::block::BlockRegistry;
 use crate::render::material::BlockMaterial;
 use crate::render::MeshDataCache;
-use bevy::asset::{Assets, RenderAssetUsages};
+use crate::world::block::BlockState;
+use bevy::asset::RenderAssetUsages;
 use bevy::math::{ivec3, vec3, Vec3};
-use bevy::prelude::{debug, info, Component, IVec3, Mesh, Res, Transform};
-use bevy::render::mesh::{Indices, MeshVertexAttribute, PrimitiveTopology, VertexFormat};
+use bevy::prelude::{Component, IVec3, Mesh, Transform};
+use bevy::render::mesh::{Indices, PrimitiveTopology};
+use bitvec::bitvec;
 use bitvec::field::BitField;
+use bitvec::order::Msb0;
 use bitvec::prelude::BitVec;
-use std::string::ToString;
+use bitvec::view::BitViewSized;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
-use bitvec::bitvec;
-use bitvec::order::Msb0;
-use bitvec::view::BitViewSized;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PaletteEntry {
     // 32768 possible blocks
     ref_count: u16,
-    pub block_name: String,
-    // blockstate info added later
+    pub block: BlockState,
 }
 
 impl PaletteEntry {
-    pub fn new(block_name: &str) -> Self {
+    pub fn new(state: BlockState) -> Self {
         PaletteEntry {
-            block_name: block_name.to_string(),
+            block: state,
             ref_count: 0,
         }
     }
@@ -45,11 +41,6 @@ impl PaletteEntry {
             panic!("Palette is already free, cannot decrement refcount!");
         }
         self.ref_count -= 1;
-    }
-}
-impl Default for PaletteEntry {
-    fn default() -> Self {
-        Self::new("air")
     }
 }
 
@@ -70,12 +61,12 @@ impl ChunkComponent {
         self.data.clone()
     }
 
-    pub fn set_block(&mut self, pos: IVec3, block: &str) -> Result<String, ChunkError> {
+    pub fn set_block(&mut self, pos: IVec3, state: BlockState) -> Result<BlockState, ChunkError> {
         let mut write = self.data.write().unwrap();
-        write.set_block(pos.x as usize, pos.y as usize, pos.z as usize, block)
+        write.set_block(pos.x as usize, pos.y as usize, pos.z as usize, state)
     }
 
-    pub fn get_block(&self, pos: IVec3) -> String {
+    pub fn get_block(&self, pos: IVec3) -> BlockState {
         let read = self.data.read().unwrap();
         read.get_block(pos.x as usize, pos.y as usize, pos.z as usize)
     }
@@ -112,7 +103,7 @@ impl ChunkData {
     pub fn new(data: BitVec, palette: Vec<PaletteEntry>) -> Self {
 
         // calcualtes the closest power of two id size for the palette.
-        let id_size = ((palette.len() + 1) as f32).log2().ceil() as usize;
+        let id_size = ((palette.len()) as f32).log2().ceil() as usize;
         if data.len() / id_size != Self::BLOCKS_PER_CHUNK {
             panic!("Bit data uses {} bits per block, but palette requires {} bits per block!", data.len() as f32 / Self::BLOCKS_PER_CHUNK as f32, id_size)
         }
@@ -125,9 +116,9 @@ impl ChunkData {
         }
     }
 
-    pub fn single(id: &str) -> Self {
+    pub fn single(state: BlockState) -> Self {
         let palette = vec![
-            PaletteEntry::new(id),
+            PaletteEntry::new(state),
         ];
 
         ChunkData {
@@ -137,23 +128,15 @@ impl ChunkData {
             is_single: true
         }
     }
-    pub fn empty() -> Self {
-        ChunkData {
-            id_size: 1,
-            data: BitVec::new(),
-            palette: Vec::new(),
-            is_single: true,
-        }
-    }
     
     pub fn is_single(&self) -> bool {
         self.is_single
     }
     
     pub fn is_empty(&self) -> bool {
-        self.is_single && self.palette.is_empty()
+        self.is_single && self.palette[0].block.is_air()
     }
-
+    
     // there are 32768 blocks in a chunk, so 32768 possible states. Could be stored in a u16 but eh.
     pub fn block_at(&self, x: usize, y: usize, z: usize) -> usize {
         let max = Self::CHUNK_SIZE;
@@ -184,12 +167,7 @@ impl ChunkData {
     }
 
     pub fn lookup_palette(&self, index: usize) -> Result<&PaletteEntry, ChunkError> {
-        if index == 0 {
-            Err(ChunkError::new("Can't lookup palette with index 0 (air)."))
-        }
-        else {
-            Ok(&self.palette[index - 1])
-        }
+        Ok(&self.palette[index])
     }
 
     // adds palette to the entry and returns the id it adds at
@@ -208,7 +186,7 @@ impl ChunkData {
         // no free palettes, add a new one.
         let max_palettes = 2_usize.pow(self.id_size as u32);
         // palettes are full. Resize the data.
-        if (self.palette.len() + 1) == max_palettes {
+        if (self.palette.len()) == max_palettes {
             self.grow_data();
         }
         // push palette at the end.
@@ -217,19 +195,14 @@ impl ChunkData {
         self.palette.len() - 1
     }
 
-    pub fn get_block(&self, x: usize, y: usize, z: usize) -> String {
+    pub fn get_block(&self, x: usize, y: usize, z: usize) -> BlockState {
         let id = self.block_at(x, y, z);
-        if id == 0 {
-            String::from("air")
-        }
-        else {
-            self.palette[id - 1].block_name.clone()
-        }
+        self.palette[id].block.clone()
     }
 
 
 
-    pub fn set_block(&mut self, x: usize, y: usize, z: usize, block: &str) -> Result<String, ChunkError> {
+    pub fn set_block(&mut self, x: usize, y: usize, z: usize, block: BlockState) -> Result<BlockState, ChunkError> {
         if x >= Self::CHUNK_SIZE || y >= Self::CHUNK_SIZE || z >= Self::CHUNK_SIZE {
             let message = format!("Index {x}, {y}, {z} is out of bounds.");
             return Err(ChunkError::new(message.as_str()));
@@ -240,25 +213,19 @@ impl ChunkData {
         
         if self.is_single {
             // single block? not anymore!
-            let has_to_expand = if self.is_empty() {
-                block != "air"
-            } else {
-                self.palette[0].block_name != block
-            };
+            let has_to_expand = self.palette[0].block != block;
+            
             if !has_to_expand {
                 // no changes since we've set the block to the one block this chunk is entirely
                 println!("No changes, chunk is single");
-                return Ok(block.to_string());
+                return Ok(block);
             }
 
             // need to make data now - since we're setting block lol.
             self.is_single = false;
             // fill with either 0 (air) or 1 (first palette entry)
             self.data = bitvec![self.palette.len(); Self::BLOCKS_PER_CHUNK];
-            if !self.is_empty() {
-                // if all one block, set the ref count to.. everything.
-                self.palette[0].ref_count = Self::BLOCKS_PER_CHUNK as u16;
-            }
+            self.palette[0].ref_count = Self::BLOCKS_PER_CHUNK as u16;
         }
         
         
@@ -266,35 +233,30 @@ impl ChunkData {
         let index = xyz_to_index(x, y, z);
 
         // if old block is not air, we need to decrease refcount.
-        let ret = if old_block != 0 {
-            let mut p = &mut self.palette[old_block - 1];
-            if p.is_free() {
-                panic!("Invalid palette data: palette {:?} is free, but exists in data", p);
-            }
-            p.ref_count -= 1;
-            p.block_name.clone()
+        let mut p = &mut self.palette[old_block];
+        if p.is_free() {
+            panic!("Invalid palette data: palette {:?} is free, but exists in data", p);
         }
-        else {
-            String::from("air")
-        };
+        p.ref_count -= 1;
+        let ret = p.block.clone();
 
-        
-        println!("Block to place: {}", block);
+
+        println!("Block to place: {:?}", block);
         println!("Palette: {:?}", self.palette);
         // check the palette to see if this block already is in it (including free ones!)
         for palette_idx in 0..self.palette.len() {
             let mut p = &mut self.palette[palette_idx];
             // block is already in the palette. TODO: update for blockstates.
-            if p.block_name == block {
+            if p.block == block {
                 p.ref_count += 1;
 
                 println!("Found stone: index: {}", palette_idx);
                 println!("Old id: {}", old_block);
-                
+
                 // actually does the bit setting operation
-                
+
                 println!("Old data: {}", &self.data[index * self.id_size..index * self.id_size + self.id_size]);
-                
+
                 set_raw(&mut self.data, self.id_size, index * self.id_size, palette_idx + 1);
 
                 println!("New data: {}", &self.data[index * self.id_size..index * self.id_size + self.id_size]);
@@ -374,7 +336,7 @@ fn block_at_raw(data: &BitVec, id_size: usize, scaled_index: usize) -> usize {
 }
 
 fn set_raw(data: &mut BitVec, id_size: usize, scaled_index: usize, value: usize) {
-    
+
     let arr = value.into_bitarray::<Msb0>();
     let slice = &arr[size_of::<usize>() * 8 - id_size..size_of::<usize>() * 8];
     for i in 0..id_size {
@@ -463,13 +425,12 @@ pub fn create_chunk_mesh(
     for i in 0..ChunkData::BLOCKS_PER_CHUNK {
 
         let id = chunk.block_at_index(i);
-
-        if id == 0 {
-            continue;
-        }
         
         let block_id = chunk.lookup_palette(id).unwrap();
-        let block_model = model_map.get(&block_id.block_name).unwrap();
+        if block_id.block.is_air() {
+            continue;
+        }
+        let block_model = model_map.get(&block_id.block).unwrap();
         let array_id = block_model.index;
 
         // println!("Block is {:?}", block);

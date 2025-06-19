@@ -1,7 +1,7 @@
 use std::any::TypeId;
 use bevy::asset::{ron, LoadedFolder};
 use bevy::prelude::*;
-use crate::asset::block::{Block, BlockLoader, BlockModel, BlockModelLoader};
+use crate::asset::block::{BlockDef, BlockLoader, BlockModel, BlockModelLoader};
 use crate::asset::procedural::BlockTextures;
 use crate::core::state::LoadingState;
 
@@ -10,12 +10,12 @@ pub mod procedural;
 
 // plugin that handles creating array textures and texture atlases
 #[derive(Default)]
-pub struct AssetPlugin;
+pub struct GameAssetPlugin;
 
-impl Plugin for AssetPlugin {
+impl Plugin for GameAssetPlugin {
     fn build(&self, app: &mut App) {
         app
-            .init_asset::<Block>()
+            .init_asset::<BlockDef>()
             .init_asset::<BlockModel>()
             .init_asset_loader::<BlockLoader>()
             .init_asset_loader::<BlockModelLoader>()
@@ -26,7 +26,6 @@ impl Plugin for AssetPlugin {
 }
 
 
-
 #[derive(Debug, thiserror::Error)]
 pub enum AssetLoaderError {
     /// An [IO](std::io) Error
@@ -35,6 +34,9 @@ pub enum AssetLoaderError {
     /// A [RON](ron) Error
     #[error("Could not parse RON: {0}")]
     RonSpannedError(#[from] ron::error::SpannedError),
+    /// invalid ron, for whatever reason.
+    #[error("Invalid RON: {0}")]
+    InvalidRon(String)
 }
 
 // destructures a loaded folder into its asset handles.

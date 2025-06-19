@@ -15,23 +15,25 @@ use bitvec::view::BitViewSized;
 use rand::distr::Uniform;
 use rand::Rng;
 use cache::ChunkCache;
-use crate::asset::block::{Block, BlockModel};
+use crate::asset::block::{BlockModel};
 use crate::render::material::BlockMaterial;
 use crate::asset::procedural::BlockTextures;
 use crate::core::state::MainGameState;
 use crate::registry::block::BlockRegistry;
 use crate::render::MeshDataCache;
+use crate::world::block::BlockState;
 use crate::world::camera::{CameraSettings, MainCamera};
 use crate::world::chunk::{ChunkComponent, ChunkData, ChunkNeedsMeshing, PaletteEntry};
 
 pub mod chunk;
 pub mod camera;
 pub mod cache;
+pub mod block;
 
 #[derive(Default)]
-pub struct WorldPlugin;
+pub struct GameWorldPlugin;
 
-impl Plugin for WorldPlugin {
+impl Plugin for GameWorldPlugin {
     fn build(&self, app: &mut App) {
         app
             .init_resource::<CameraSettings>()
@@ -111,20 +113,9 @@ fn grab_cursor(
 // runs once when InGame reached
 fn setup(
     mut commands: Commands,
-    asset_server: Res<AssetServer>,
-    block_data_cache: Res<MeshDataCache>,
-    block_textures: Res<BlockTextures>,
     camera_settings: Res<CameraSettings>,
-
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut meshes: ResMut<Assets<Mesh>>,
 ) {
     info!("Loading world...");
-
-    // let texture1: Handle<Image> = asset_server.load("texture/stone.png");
-    // let texture2: Handle<Image> = asset_server.load("dirt.png");
-    // let texture3: Handle<Image> = asset_server.load("oak_planks.png");
-
     commands.spawn((
         Camera3d::default(),
         Projection::from(PerspectiveProjection {
@@ -140,24 +131,18 @@ fn setup(
         Transform::from_xyz(25.0, 50.0, 10.0).looking_at(Vec3::ZERO, Vec3::Y)
     ));
 
-    // just so i can see a reference to 0 0 0
-    // commands.spawn((
-    //     Transform::from_xyz(0.0, 0.0, 0.0),
-    //     MeshMaterial3d(materials.add(Color::srgb(1.0, 0.0, 0.0))),
-    //     Mesh3d(meshes.add(Sphere {radius: 3.0}.mesh())),
-    // ));
 }
 
 #[derive(Component)]
 pub struct GameWorld {
-    pub generator_func: Arc<dyn Fn(IVec3) -> ChunkData + Send + Sync>
+    // pub generator_func: Arc<dyn Fn(IVec3) -> ChunkData + Send + Sync>
 }
 impl Default for GameWorld {
     fn default() -> Self {
         Self {
-            generator_func: Arc::new(|i| {
-                make_box()
-            })
+            // generator_func: Arc::new(|i| {
+            //     make_box()
+            // })
         }
     }
 }
@@ -434,11 +419,13 @@ fn queue_mesh_creation(
 #[derive(Default, Copy, Clone, Debug, Resource)]
 struct StartedGenerating(bool);
 
+
 fn temp_create_chunk(
     camera: Single<&Transform, With<MainCamera>>,
     mut world: Single<(&GameWorld, &mut ChunkQueue, &ChunkCache)>,
     kb_input: Res<ButtonInput<KeyCode>>,
     mut started_generating: ResMut<StartedGenerating>,
+    block_reg: Res<BlockRegistry>,
 ) {
     let (game_world, mut chunk_queue, chunk_cache) = world.into_inner();
 
@@ -446,7 +433,8 @@ fn temp_create_chunk(
 
 
     let rad = 5;
-
+    
+    
     if kb_input.just_pressed(KeyCode::KeyX) {
         info!("Loading chunks...");
         let mut i = 0;
@@ -457,10 +445,11 @@ fn temp_create_chunk(
                     if chunk_cache.get_chunk(coord).is_some() {
                         continue;
                     }
-
-                    let func = game_world.generator_func.clone();
+                    
+                    let reg = block_reg.clone();
+                    
                     let task = AsyncComputeTaskPool::get().spawn(async move {
-                        func(coord)
+                        make_box(reg)
                     });
                     chunk_queue.currently_generating.insert(coord, task);
                     i += 1;
@@ -479,6 +468,7 @@ fn temp_set_block(
     world: Single<(&GameWorld, &ChunkQueue, &ChunkCache)>,
     kb_input: Res<ButtonInput<KeyCode>>,
     camera: Single<&Transform, With<MainCamera>>,
+    block_reg: Res<BlockRegistry>,
 ) {
     let (game_world, chunk_queue, chunk_cache) = world.into_inner();
 
@@ -496,8 +486,10 @@ fn temp_set_block(
         let pos2 = ivec3(1, 0, 0);
         if let Some(entity) = chunk_cache.get_chunk(center) {
             let mut component = q_chunks.get_mut(entity).unwrap();
-            component.set_block(pos1, "oak_planks");
-            component.set_block(pos2, "oak_planks");
+
+            let planks = BlockState::new(block_reg.get_block("oak_planks").unwrap().clone());
+            component.set_block(pos1, planks.clone());
+            component.set_block(pos2, planks);
             commands.entity(entity).insert(ChunkNeedsMeshing);
         }
     }
@@ -511,11 +503,14 @@ fn temp_set_block(
         if let Some(entity) = chunk_cache.get_chunk(camera_chunk) {
             let mut component = q_chunks.get_mut(entity).unwrap();
 
-            info!("Old: {}", component.get_block(pos_in_chunk));
+            info!("Old: {:?}", component.get_block(pos_in_chunk));
 
-            match component.set_block(pos_in_chunk, "stone") {
+            let stone = BlockState::new(block_reg.get_block("stone").unwrap().clone());
+
+
+            match component.set_block(pos_in_chunk, stone) {
                 Ok(old) => {
-                    info!("Set block at {}. Old: {}", pos, old);
+                    info!("Set block at {}. Old: {:?}", pos, old);
                     commands.entity(entity).insert(ChunkNeedsMeshing);
                 }
                 Err(e) => {
@@ -523,7 +518,7 @@ fn temp_set_block(
                 }
             }
 
-            info!("New: {}", component.get_block(pos_in_chunk));
+            info!("New: {:?}", component.get_block(pos_in_chunk));
 
         }
         else {
@@ -533,15 +528,16 @@ fn temp_set_block(
 }
 
 
-fn make_data() -> ChunkData {
+fn make_data(block_reg: BlockRegistry) -> ChunkData {
     let mut palette = vec![
-        PaletteEntry::new("stone"),
-        PaletteEntry::new("dirt"),
+        PaletteEntry::new(BlockState::new(block_reg.get_block("air").unwrap().clone())),
+        PaletteEntry::new(BlockState::new(block_reg.get_block("stone").unwrap().clone())),
+        PaletteEntry::new(BlockState::new(block_reg.get_block("dirt").unwrap().clone())),
         // PaletteEntry::new("diamond_ore"),
         // PaletteEntry::new("iron_ore"),
     ];
 
-    let id_size = ((palette.len() + 1) as f32).log2().ceil() as usize;
+    let id_size = ((palette.len()) as f32).log2().ceil() as usize;
 
     let mut vec = BitVec::with_capacity(id_size * 32768);
 
@@ -555,7 +551,7 @@ fn make_data() -> ChunkData {
                     1
                 };
 
-                palette[id - 1].increment_ref_count();
+                palette[id].increment_ref_count();
 
                 let arr = id.into_bitarray::<Msb0>();
                 // println!("Bitarray: {}", arr);
@@ -572,17 +568,18 @@ fn make_data() -> ChunkData {
 }
 
 
-pub fn make_data_chaos() -> ChunkData {
+pub fn make_data_chaos(block_reg: BlockRegistry) -> ChunkData {
     let mut palette = vec![
-        PaletteEntry::new("stone"),
-        PaletteEntry::new("dirt"),
-        PaletteEntry::new("oak_planks"),
+        PaletteEntry::new(BlockState::new(block_reg.get_block("air").unwrap().clone())),
+        PaletteEntry::new(BlockState::new(block_reg.get_block("stone").unwrap().clone())),
+        PaletteEntry::new(BlockState::new(block_reg.get_block("dirt").unwrap().clone())),
+        PaletteEntry::new(BlockState::new(block_reg.get_block("oak_planks").unwrap().clone())),
         // PaletteEntry::new("diamond_ore"),
         // PaletteEntry::new("iron_ore"),
     ];
 
     // calcualtes the closest power of two id size for the palette.
-    let id_size = ((palette.len() + 1) as f32).log2().ceil() as usize;
+    let id_size = ((palette.len()) as f32).log2().ceil() as usize;
 
 
     let mut vec = BitVec::with_capacity(id_size * 32768);
@@ -591,11 +588,9 @@ pub fn make_data_chaos() -> ChunkData {
     for i in 0..32768 {
         let scaled_idx = i * id_size;
         // 0-4
-        let rand_id = rng.sample(Uniform::new(0, palette.len() + 1).unwrap());
+        let rand_id = rng.sample(Uniform::new(0, palette.len()).unwrap());
 
-        if rand_id != 0 {
-            palette[rand_id - 1].increment_ref_count();
-        }
+        palette[rand_id].increment_ref_count();
         let arr = rand_id.into_bitarray::<Msb0>();
         // println!("Bitarray: {}", arr);
 
@@ -613,17 +608,18 @@ pub fn make_data_chaos() -> ChunkData {
 }
 
 
-pub fn make_box() -> ChunkData {
+pub fn make_box(block_reg: BlockRegistry) -> ChunkData {
     let mut palette = vec![
-        PaletteEntry::new("stone"),
-        PaletteEntry::new("dirt"),
-        PaletteEntry::new("oak_planks"),
+        PaletteEntry::new(BlockState::new(block_reg.get_block("air").unwrap().clone())),
+        PaletteEntry::new(BlockState::new(block_reg.get_block("stone").unwrap().clone())),
+        PaletteEntry::new(BlockState::new(block_reg.get_block("dirt").unwrap().clone())),
+        PaletteEntry::new(BlockState::new(block_reg.get_block("oak_planks").unwrap().clone())),
         // PaletteEntry::new("diamond_ore"),
         // PaletteEntry::new("iron_ore"),
     ];
 
 
-    let id_size = ((palette.len() + 1) as f32).log2().ceil() as usize;
+    let id_size = ((palette.len()) as f32).log2().ceil() as usize;
 
     let mut vec = BitVec::with_capacity(id_size * 32768);
     let mut rng = rand::rng();
@@ -631,15 +627,14 @@ pub fn make_box() -> ChunkData {
         for y in 0..32 {
             for z in 0..32 {
                 let id = if 12 <= x && x <= 19 && 12 <= y && y <= 19 {
-                    rng.sample(Uniform::new(1, palette.len() + 1).unwrap())
+                    rng.sample(Uniform::new(1, palette.len()).unwrap())
                 }
                 else {
                     0
                 };
 
-                if id != 0 {
-                    palette[id - 1].increment_ref_count();
-                }
+                palette[id].increment_ref_count();
+                
                 let arr = id.into_bitarray::<Msb0>();
                 // println!("Bitarray: {}", arr);
 
