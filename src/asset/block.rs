@@ -15,24 +15,24 @@ use crate::asset::AssetLoaderError::{InvalidRon, Io};
 
 #[derive(Debug, Hash, Clone, PartialEq, Eq, Asset, TypePath, Serialize, Deserialize)]
 #[serde(rename="Block")]
-pub struct BlockDef {
+pub struct BlockAsset {
     pub id: String,
     pub hardness: u32,
-    pub states: Vec<BlockStateDef>,
+    pub states: Vec<BlockStateAsset>,
     pub default_state: BTreeMap<String, String>,
-    pub models: Vec<BlockModelDef>
+    pub models: Vec<BlockModelAsset>
 }
 
 #[derive(Debug, Hash, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename="BlockState")]
-pub struct BlockStateDef {
+pub struct BlockStateAsset {
     pub name: String,
     pub values: Vec<String>
 }
 
 #[derive(Debug, Hash, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename="ModelDef")]
-pub struct BlockModelDef {
+pub struct BlockModelAsset {
     pub state: BTreeMap<String, String>,
     model: String,
     #[serde(skip)]
@@ -40,7 +40,7 @@ pub struct BlockModelDef {
 }
 
 
-fn get_state<'a>(key: &str, states: &'a Vec<BlockStateDef>) -> Option<&'a BlockStateDef> {
+fn get_state<'a>(key: &str, states: &'a Vec<BlockStateAsset>) -> Option<&'a BlockStateAsset> {
     for state in states.iter() {
         if state.name == key {
             return Some(state);
@@ -54,7 +54,7 @@ fn get_state<'a>(key: &str, states: &'a Vec<BlockStateDef>) -> Option<&'a BlockS
 pub struct BlockLoader;
 
 impl AssetLoader for BlockLoader {
-    type Asset = BlockDef;
+    type Asset = BlockAsset;
     type Settings = ();
     type Error = AssetLoaderError;
 
@@ -62,7 +62,7 @@ impl AssetLoader for BlockLoader {
         Box::pin(async move {
             let mut bytes = Vec::new();
             reader.read_to_end(&mut bytes).await?;
-            let mut block = ron::de::from_bytes::<BlockDef>(&bytes)?;
+            let mut block = ron::de::from_bytes::<BlockAsset>(&bytes)?;
 
             
             validate_state(block.id.as_str(), &block.default_state, &block.states)?;
@@ -93,7 +93,7 @@ impl AssetLoader for BlockLoader {
     }
 }
 
-fn validate_state(id: &str, state: &BTreeMap<String, String>, state_def: &Vec<BlockStateDef>) -> Result<(), AssetLoaderError> {
+fn validate_state(id: &str, state: &BTreeMap<String, String>, state_def: &Vec<BlockStateAsset>) -> Result<(), AssetLoaderError> {
     for (k, v) in state.iter() {
         match get_state(k, state_def) {
             None => {

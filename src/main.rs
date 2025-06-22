@@ -5,30 +5,23 @@ mod world;
 mod render;
 mod ui;
 
-use render::material::BlockMaterial;
 use crate::registry::RegistryPlugin;
+use crate::render::pipeline::GameRenderPipelinePlugin;
+use crate::render::GameRenderPlugin;
+use crate::ui::GameUiPlugin;
 use crate::world::GameWorldPlugin;
 use asset::GameAssetPlugin;
-use bevy::asset::RenderAssetUsages;
-use bevy::color::palettes::basic::WHITE;
 use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
-use bevy::pbr::wireframe::{WireframeConfig, WireframePlugin};
+use bevy::pbr::wireframe::WireframePlugin;
 use bevy::prelude::*;
-use bevy::render::mesh::{Indices, PrimitiveTopology};
 use bevy::render::render_resource::WgpuFeatures;
 use bevy::render::settings::{RenderCreation, WgpuSettings};
 use bevy::render::RenderPlugin;
+use bevy::window::PresentMode;
 use bitvec::field::BitField;
-use bitvec::prelude::Msb0;
-use bitvec::vec::BitVec;
 use bitvec::view::BitViewSized;
 use core::CoreGamePlugin;
-use rand::distr::Uniform;
 use rand::Rng;
-use world::chunk::{ChunkData, PaletteEntry};
-use crate::render::GameRenderPlugin;
-use crate::render::pipeline::GameRenderPipelinePlugin;
-use crate::ui::GameUiPlugin;
 
 fn main() {
 
@@ -42,8 +35,16 @@ fn main() {
                         features: WgpuFeatures::POLYGON_MODE_LINE,
                         ..default()
                     }),
-                ..default()
-            }),
+                    ..default()
+                })
+                .set(WindowPlugin {
+                    primary_window: Some(Window {
+                        title: "GTClone".into(),
+                        present_mode: PresentMode::AutoNoVsync,
+                        ..default()
+                    }),
+                    ..default()
+                }),
             WireframePlugin::default(),
             FrameTimeDiagnosticsPlugin::default(),
 

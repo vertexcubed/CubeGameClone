@@ -19,7 +19,8 @@ use crate::asset::block::{BlockModel};
 use crate::render::material::BlockMaterial;
 use crate::asset::procedural::BlockTextures;
 use crate::core::state::MainGameState;
-use crate::registry::block::BlockRegistry;
+use crate::registry::block::Block;
+use crate::registry::{RegistryHandle, Registry};
 use crate::render::MeshDataCache;
 use crate::world::block::BlockState;
 use crate::world::camera::{CameraSettings, MainCamera};
@@ -425,7 +426,7 @@ fn temp_create_chunk(
     mut world: Single<(&GameWorld, &mut ChunkQueue, &ChunkCache)>,
     kb_input: Res<ButtonInput<KeyCode>>,
     mut started_generating: ResMut<StartedGenerating>,
-    block_reg: Res<BlockRegistry>,
+    block_reg: Res<RegistryHandle<Block>>,
 ) {
     let (game_world, mut chunk_queue, chunk_cache) = world.into_inner();
 
@@ -449,7 +450,7 @@ fn temp_create_chunk(
                     let reg = block_reg.clone();
                     
                     let task = AsyncComputeTaskPool::get().spawn(async move {
-                        make_box(reg)
+                        make_box(reg.as_ref())
                     });
                     chunk_queue.currently_generating.insert(coord, task);
                     i += 1;
@@ -468,7 +469,7 @@ fn temp_set_block(
     world: Single<(&GameWorld, &ChunkQueue, &ChunkCache)>,
     kb_input: Res<ButtonInput<KeyCode>>,
     camera: Single<&Transform, With<MainCamera>>,
-    block_reg: Res<BlockRegistry>,
+    block_reg: Res<RegistryHandle<Block>>,
 ) {
     let (game_world, chunk_queue, chunk_cache) = world.into_inner();
 
@@ -487,7 +488,7 @@ fn temp_set_block(
         if let Some(entity) = chunk_cache.get_chunk(center) {
             let mut component = q_chunks.get_mut(entity).unwrap();
 
-            let planks = BlockState::new(block_reg.get_block("oak_planks").unwrap().clone());
+            let planks = BlockState::new("oak_planks", block_reg.as_ref()).unwrap();
             component.set_block(pos1, planks.clone());
             component.set_block(pos2, planks);
             commands.entity(entity).insert(ChunkNeedsMeshing);
@@ -505,7 +506,7 @@ fn temp_set_block(
 
             info!("Old: {:?}", component.get_block(pos_in_chunk));
 
-            let stone = BlockState::new(block_reg.get_block("stone").unwrap().clone());
+            let stone = BlockState::new("stone", block_reg.as_ref()).unwrap();
 
 
             match component.set_block(pos_in_chunk, stone) {
@@ -528,11 +529,11 @@ fn temp_set_block(
 }
 
 
-fn make_data(block_reg: BlockRegistry) -> ChunkData {
+fn make_data(block_reg: &Registry<Block>) -> ChunkData {
     let mut palette = vec![
-        PaletteEntry::new(BlockState::new(block_reg.get_block("air").unwrap().clone())),
-        PaletteEntry::new(BlockState::new(block_reg.get_block("stone").unwrap().clone())),
-        PaletteEntry::new(BlockState::new(block_reg.get_block("dirt").unwrap().clone())),
+        PaletteEntry::new(BlockState::new("air", block_reg).unwrap()),
+        PaletteEntry::new(BlockState::new("stone", block_reg).unwrap()),
+        PaletteEntry::new(BlockState::new("dirt", block_reg).unwrap()),
         // PaletteEntry::new("diamond_ore"),
         // PaletteEntry::new("iron_ore"),
     ];
@@ -568,12 +569,12 @@ fn make_data(block_reg: BlockRegistry) -> ChunkData {
 }
 
 
-pub fn make_data_chaos(block_reg: BlockRegistry) -> ChunkData {
+pub fn make_data_chaos(block_reg: &Registry<Block>) -> ChunkData {
     let mut palette = vec![
-        PaletteEntry::new(BlockState::new(block_reg.get_block("air").unwrap().clone())),
-        PaletteEntry::new(BlockState::new(block_reg.get_block("stone").unwrap().clone())),
-        PaletteEntry::new(BlockState::new(block_reg.get_block("dirt").unwrap().clone())),
-        PaletteEntry::new(BlockState::new(block_reg.get_block("oak_planks").unwrap().clone())),
+        PaletteEntry::new(BlockState::new("air", block_reg).unwrap()),
+        PaletteEntry::new(BlockState::new("stone", block_reg).unwrap()),
+        PaletteEntry::new(BlockState::new("dirt", block_reg).unwrap()),
+        PaletteEntry::new(BlockState::new("oak_planks", block_reg).unwrap()),
         // PaletteEntry::new("diamond_ore"),
         // PaletteEntry::new("iron_ore"),
     ];
@@ -608,12 +609,12 @@ pub fn make_data_chaos(block_reg: BlockRegistry) -> ChunkData {
 }
 
 
-pub fn make_box(block_reg: BlockRegistry) -> ChunkData {
+pub fn make_box(block_reg: &Registry<Block>) -> ChunkData {
     let mut palette = vec![
-        PaletteEntry::new(BlockState::new(block_reg.get_block("air").unwrap().clone())),
-        PaletteEntry::new(BlockState::new(block_reg.get_block("stone").unwrap().clone())),
-        PaletteEntry::new(BlockState::new(block_reg.get_block("dirt").unwrap().clone())),
-        PaletteEntry::new(BlockState::new(block_reg.get_block("oak_planks").unwrap().clone())),
+        PaletteEntry::new(BlockState::new("air", block_reg).unwrap()),
+        PaletteEntry::new(BlockState::new("stone", block_reg).unwrap()),
+        PaletteEntry::new(BlockState::new("dirt", block_reg).unwrap()),
+        PaletteEntry::new(BlockState::new("oak_planks", block_reg).unwrap()),
         // PaletteEntry::new("diamond_ore"),
         // PaletteEntry::new("iron_ore"),
     ];

@@ -21,8 +21,14 @@ impl std::error::Error for ChunkError {}
 
 #[derive(Debug, thiserror::Error)]
 pub enum RegistryError {
-    #[error("Value {0} already registered as {1}")]
+    #[error("Registry {1}: Value {0} is already registered!")]
     Duplicate(String, String),
-    #[error("{0} registry is frozen.")]
+    #[error("Registry {0}: Cannot write to frozen registry!")]
     Frozen(String),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum BlockStateError {
+    #[error("Invalid block id: {0}")]
+    InvalidId(String)
 }

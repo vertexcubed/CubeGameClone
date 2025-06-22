@@ -3,10 +3,9 @@ use bevy::asset::{Assets, Handle, RenderAssetUsages};
 use bevy::image::Image;
 use bevy::prelude::{NextState, Res, ResMut, Resource};
 use bevy::render::render_resource::{Extent3d, TextureDimension};
-use crate::asset::block::{BlockDef, BlockModel};
-use crate::core::AllBlockDefs;
+use crate::asset::block::{BlockAsset, BlockModel};
+use crate::core::AllBlockAssets;
 use crate::core::state::LoadingState;
-use crate::registry::block::BlockRegistry;
 use crate::render::material::BlockMaterial;
 
 #[derive(Debug, Default, Clone, Resource)]
@@ -27,9 +26,9 @@ impl BlockTextures {
 // runs once on entering Textures state.
 // All of these textures are guaranteed to be loaded
 pub fn create_block_array_texture(
-    all_block_defs: Res<AllBlockDefs>,
+    all_block_defs: Res<AllBlockAssets>,
     mut block_textures: ResMut<BlockTextures>,
-    block_asset: Res<Assets<BlockDef>>,
+    block_asset: Res<Assets<BlockAsset>>,
     block_model_asset: Res<Assets<BlockModel>>,
     mut image_asset: ResMut<Assets<Image>>,
     mut next_load_state: ResMut<NextState<LoadingState>>,

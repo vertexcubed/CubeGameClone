@@ -11,6 +11,7 @@ pub enum MainGameState {
 #[derive(States, Debug, Default, Clone, PartialEq, Eq, Hash)]
 pub enum LoadingState {
     #[default]
+    Assets,
     Registries,
     Textures,
     BlockCache,

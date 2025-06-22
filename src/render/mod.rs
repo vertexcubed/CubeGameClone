@@ -11,11 +11,12 @@ use bevy::prelude::{Commands, KeyCode, Mesh3d, NextState, OnEnter, Query, Res, R
 use bevy::render::mesh::allocator::MeshAllocatorSettings;
 use bevy::render::RenderApp;
 use bevy::utils::default;
-use crate::asset::block::{BlockDef, BlockModel};
+use crate::asset::block::{BlockAsset, BlockModel};
 use crate::asset::procedural::BlockTextures;
-use crate::core::AllBlockDefs;
+use crate::core::AllBlockAssets;
 use crate::core::state::LoadingState;
-use crate::registry::block::BlockRegistry;
+use crate::registry::block::{Block};
+use crate::registry::{RegistryHandle, Registry, RegistryObject};
 use crate::render::material::BlockMaterial;
 use crate::world::block::BlockState;
 
@@ -88,10 +89,10 @@ pub struct BlockModelMinimal {
 // creates an atomic cache of all block model and texture data.
 // Needed to send to other threads
 fn create_block_data_cache(
-    all_block_defs: Res<AllBlockDefs>,
+    all_block_defs: Res<AllBlockAssets>,
     mut cache: ResMut<MeshDataCache>,
-    block_reg: Res<BlockRegistry>,
-    block_asset: Res<Assets<BlockDef>>,
+    block_reg: Res<RegistryHandle<Block>>,
+    block_asset: Res<Assets<BlockAsset>>,
     block_model_asset: Res<Assets<BlockModel>>,
     block_textures: Res<BlockTextures>,
     mut next_load: ResMut<NextState<LoadingState>>
@@ -104,11 +105,10 @@ fn create_block_data_cache(
             let texture = &block_model_asset.get(&def.model_handle).unwrap().texture_handle;
             let array_id = block_textures.get_texture_id(texture);
 
-            let block = block_reg.get_block(block.id.as_str()).unwrap().clone();
-            let state = BlockState {
-                block,
-                state: def.state.clone(),
-            };
+            let reg = block_reg.as_ref().as_ref();
+            
+            let block = reg.get(block.id.as_str()).unwrap().clone();
+            let state = BlockState::with_state(block.get_id(), def.state.clone(), &block_reg).unwrap();
 
             map.insert(state, BlockModelMinimal {
                 index: array_id

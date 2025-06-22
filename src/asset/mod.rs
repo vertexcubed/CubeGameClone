@@ -1,7 +1,7 @@
 use std::any::TypeId;
 use bevy::asset::{ron, LoadedFolder};
 use bevy::prelude::*;
-use crate::asset::block::{BlockDef, BlockLoader, BlockModel, BlockModelLoader};
+use crate::asset::block::{BlockAsset, BlockLoader, BlockModel, BlockModelLoader};
 use crate::asset::procedural::BlockTextures;
 use crate::core::state::LoadingState;
 
@@ -15,7 +15,7 @@ pub struct GameAssetPlugin;
 impl Plugin for GameAssetPlugin {
     fn build(&self, app: &mut App) {
         app
-            .init_asset::<BlockDef>()
+            .init_asset::<BlockAsset>()
             .init_asset::<BlockModel>()
             .init_asset_loader::<BlockLoader>()
             .init_asset_loader::<BlockModelLoader>()
