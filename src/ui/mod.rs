@@ -3,6 +3,7 @@ use std::time::Duration;
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 use crate::world::camera::MainCamera;
+use crate::world::chunk;
 
 #[derive(Default)]
 pub struct GameUiPlugin;
@@ -61,7 +62,7 @@ fn build_debug_ui(
         ));
 
         builder.spawn((
-            Text::new("x: 0.0, y: 0.0, z: 0.0"),
+            Text::new("x: 0.0, y: 0.0, z: 0.0 [0, 0, 0]"),
             TextFont {
                 font_size: 12.0,
                 ..default()
@@ -116,6 +117,8 @@ fn update_position(
     mut writer: TextUiWriter,
 ) {
     let pos = camera.translation;
+    let chunk_pos = chunk::pos_to_chunk_pos(pos.as_ivec3());
     let (x, y, z) = (pos.x, pos.y, pos.z);
-    *writer.text(position.into_inner(), 0) = format!("x: {x:.4}, y: {y:.4}, z: {z:.4}");
+    let (ix, iy, iz) = (chunk_pos.x, chunk_pos.y, chunk_pos.z);
+    *writer.text(position.into_inner(), 0) = format!("x: {x:.4}, y: {y:.4}, z: {z:.4} [{ix}, {iy}, {iz}]");
 }

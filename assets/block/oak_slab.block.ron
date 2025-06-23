@@ -1,0 +1,37 @@
+Block(
+    id: "oak_slab",
+    hardness: 1,
+    states: [
+        BlockState(
+            name: "half",
+            values: [
+                "bottom",
+                "top",
+                "double"
+            ]
+        )
+    ],
+    default_state: {
+        "half": "bottom"
+    },
+    models: [
+        ModelDef(
+            state: {
+                "half": "bottom"
+            },
+            model: "block/oak_planks"
+        ),
+        ModelDef(
+            state: {
+                "half": "top"
+            },
+            model: "block/oak_planks"
+        ),
+        ModelDef(
+            state: {
+                "half": "double"
+            },
+            model: "block/oak_planks"
+        )
+    ]
+)

@@ -63,7 +63,8 @@ impl AssetLoader for BlockLoader {
             let mut bytes = Vec::new();
             reader.read_to_end(&mut bytes).await?;
             let mut block = ron::de::from_bytes::<BlockAsset>(&bytes)?;
-
+            
+            println!("Block: {:?}", block);
             
             validate_state(block.id.as_str(), &block.default_state, &block.states)?;
 
@@ -94,6 +95,7 @@ impl AssetLoader for BlockLoader {
 }
 
 fn validate_state(id: &str, state: &BTreeMap<String, String>, state_def: &Vec<BlockStateAsset>) -> Result<(), AssetLoaderError> {
+    
     for (k, v) in state.iter() {
         match get_state(k, state_def) {
             None => {
@@ -101,7 +103,7 @@ fn validate_state(id: &str, state: &BTreeMap<String, String>, state_def: &Vec<Bl
                 return Err(InvalidRon(str));
             }
             Some(def) => {
-                if !def.values.contains(k) {
+                if !def.values.contains(v) {
                     let str = format!("Value {} does not exist for state {} in block {}", v, k, id);
                     return Err(InvalidRon(str));
                 }

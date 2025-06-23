@@ -21,7 +21,7 @@ impl ChunkCache {
     
     pub fn add_to_cache(&mut self, pos: IVec3, id: Entity) {
         if self.map.contains_key(&pos) {
-            panic!("Cannot add chunk to cache multiple times!");
+            panic!("Cannot add chunk {} to cache multiple times!", pos);
         }
         else {
             self.map.insert(pos, id);

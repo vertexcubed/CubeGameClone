@@ -6,12 +6,14 @@ use bevy::prelude::*;
 use crate::{asset, registry};
 use crate::asset::block::{BlockAsset};
 use crate::core::errors::RegistryError;
+use crate::core::event::PlayerMovedEvent;
 use crate::core::state::{LoadingState, MainGameState};
 use crate::registry::block::{Block};
 use crate::registry::{RegistryHandle, Registry};
 
 pub mod state;
 pub mod errors;
+pub mod event;
 
 #[derive(Default)]
 pub struct CoreGamePlugin;
@@ -23,13 +25,17 @@ impl Plugin for CoreGamePlugin {
             .init_resource::<AllBlockAssets>()
             .init_state::<MainGameState>()
             .init_state::<LoadingState>()
+            .add_event::<PlayerMovedEvent>()
+            
+            
+            
             .add_systems(Startup, load_folders)
             .add_systems(Update, (all_folders_loaded, check_loading_blocks)
                 .run_if(in_state(LoadingState::Assets))
             )
             .add_systems(OnEnter(LoadingState::Registries), create_block_registry)
             .add_systems(OnExit(LoadingState::Registries), freeze_registries)
-            
+
             .add_systems(OnEnter(LoadingState::Done), finish_loading)
         ;
     }

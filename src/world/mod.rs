@@ -18,6 +18,7 @@ use cache::ChunkCache;
 use crate::asset::block::{BlockModel};
 use crate::render::material::BlockMaterial;
 use crate::asset::procedural::BlockTextures;
+use crate::core::event::PlayerMovedEvent;
 use crate::core::state::MainGameState;
 use crate::registry::block::Block;
 use crate::registry::{RegistryHandle, Registry};
@@ -43,8 +44,9 @@ impl Plugin for GameWorldPlugin {
 
             .add_systems(Update, (handle_input, ))
             .add_systems(FixedUpdate, queue_mesh_creation)
-            .add_systems(Update, (temp_create_chunk, temp_set_block, receive_generated_chunks, create_chunk_entities))
+            .add_systems(Update, (temp_create_chunk, temp_set_block, receive_generated_chunks, create_chunk_entities).chain())
             .add_systems(Update, (receive_generated_meshes, upload_meshes))
+            .add_systems(Update, on_player_moved)
             .add_systems(OnEnter(MainGameState::InGame), (setup, grab_cursor, create_world))
         ;
     }
@@ -57,6 +59,7 @@ fn handle_input(
     timer: Res<Time>,
     kb_input: Res<ButtonInput<KeyCode>>,
     mouse_motion: Res<AccumulatedMouseMotion>,
+    mut player_moved: EventWriter<PlayerMovedEvent>,
 ) {
     let delta = mouse_motion.delta;
 
@@ -97,8 +100,15 @@ fn handle_input(
         movement -= vec3(0., 1., 0.);
     }
 
+    let old = transform.translation;
     movement = movement.normalize_or_zero();
     transform.translation += movement * camera_settings.movement_speed * timer.delta_secs();
+    if movement != Vec3::ZERO {
+        player_moved.write(PlayerMovedEvent {
+            old,
+            new: transform.translation
+        });
+    }
 }
 
 
@@ -159,6 +169,8 @@ fn create_world(
         ));
 }
 
+
+//TODO: switch "finished" queues to priority queues to allow O(logn) lookup.
 #[derive(Component, Debug, Default)]
 struct ChunkQueue {
 
@@ -524,6 +536,47 @@ fn temp_set_block(
         }
         else {
             info!("Can't set block at {}, chunk not in cache.", pos);
+        }
+    }
+}
+
+
+fn on_player_moved(
+    mut event: EventReader<PlayerMovedEvent>,
+    mut world: Single<(&GameWorld, &mut ChunkQueue, &ChunkCache)>,
+    block_reg: Res<RegistryHandle<Block>>,
+) {
+    let (game_world, mut chunk_queue, chunk_cache) = world.into_inner();
+    for e in event.read() {
+        let old_chunk = chunk::pos_to_chunk_pos(e.old.as_ivec3());
+        let new_chunk = chunk::pos_to_chunk_pos(e.new.as_ivec3());
+        if old_chunk == new_chunk {
+            continue;
+        }
+
+        // chunk changed - generate new chunks
+        let rad = 5;
+
+        for x in -rad..rad + 1 {
+            for z in -rad..rad + 1 {
+                for y in -rad..rad + 1 {
+                    let coord = ivec3(x, y, z) + new_chunk;
+                    if chunk_cache.get_chunk(coord).is_some() {
+                        continue;
+                    }
+                    if chunk_queue.currently_generating.get(&coord).is_some() {
+                        continue;
+                    }
+
+                    // generate
+                    let reg = block_reg.clone();
+                    let task = AsyncComputeTaskPool::get().spawn(async move {
+                        make_box(reg.as_ref())
+                    });
+                    chunk_queue.currently_generating.insert(coord, task);
+
+                }
+            }
         }
     }
 }

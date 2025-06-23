@@ -52,7 +52,7 @@ impl <T: RegistryObject> Registry<T> {
         }
         Self {
             name: name.to_string(),
-            map: HashMap::new(),
+            map,
             frozen: false,
         }
     }
