@@ -1,3 +1,4 @@
+use std::collections::hash_map::Iter;
 use bevy::prelude::{Commands, Component, Entity, IVec3};
 use std::collections::HashMap;
 
@@ -36,5 +37,9 @@ impl ChunkCache {
             },
             None => false
         }
+    }
+    
+    pub fn iter(&self) -> Iter<'_, IVec3, Entity> {
+        self.map.iter()
     }
 }

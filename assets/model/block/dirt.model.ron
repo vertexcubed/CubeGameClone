@@ -1,3 +1,12 @@
 BlockModel(
-    texture: "dirt"
+    parent: Some("block/base/full"),
+
+    textures: {
+        "N": "dirt",
+        "S": "dirt",
+        "E": "dirt",
+        "W": "dirt",
+        "U": "dirt",
+        "D": "dirt"
+    }
 )

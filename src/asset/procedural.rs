@@ -1,9 +1,9 @@
 use std::collections::{HashMap, HashSet};
 use bevy::asset::{Assets, Handle, RenderAssetUsages};
 use bevy::image::Image;
-use bevy::prelude::{NextState, Res, ResMut, Resource};
+use bevy::prelude::{error, NextState, Res, ResMut, Resource};
 use bevy::render::render_resource::{Extent3d, TextureDimension};
-use crate::asset::block::{BlockAsset, BlockModel};
+use crate::asset::block::{BlockAsset, BlockModelAsset};
 use crate::core::AllBlockAssets;
 use crate::core::state::LoadingState;
 use crate::render::material::BlockMaterial;
@@ -16,8 +16,8 @@ pub struct BlockTextures {
 }
 
 impl BlockTextures {
-    pub fn get_texture_id(&self, name: &Handle<Image>) -> u32 {
-        self.map[name]
+    pub fn get_texture_id(&self, name: &Handle<Image>) -> Option<u32> {
+        self.map.get(name).cloned()
     }
 }
 
@@ -29,7 +29,7 @@ pub fn create_block_array_texture(
     all_block_defs: Res<AllBlockAssets>,
     mut block_textures: ResMut<BlockTextures>,
     block_asset: Res<Assets<BlockAsset>>,
-    block_model_asset: Res<Assets<BlockModel>>,
+    block_model_asset: Res<Assets<BlockModelAsset>>,
     mut image_asset: ResMut<Assets<Image>>,
     mut next_load_state: ResMut<NextState<LoadingState>>,
     mut materials: ResMut<Assets<BlockMaterial>>,
@@ -52,68 +52,75 @@ pub fn create_block_array_texture(
             }
             visited_models.insert(model.model_handle.clone());
             
-            let texture_handle = 
-                &block_model_asset.get(
+            let model = 
+                block_model_asset.get(
                     &model.model_handle
-                ).unwrap().texture_handle;
-
-            // if we've already added this texture to the array texture? continue on.
-            if visited_textures.contains(texture_handle) {
-                continue;
-            }
-            visited_textures.insert(texture_handle.clone());
+                ).unwrap();
             
+            for (k, texture_handle) in model.texture_handles.iter() {
+                // if we've already added this texture to the array texture? continue on.
+                if visited_textures.contains(texture_handle) {
+                    continue;
+                }
+                visited_textures.insert(texture_handle.clone());
+
+
+                let image = image_asset.get(texture_handle).unwrap();
+                let descriptor = &image.texture_descriptor;
+                let mut should_convert = false;
+                match (size, format) {
+                    (None, None) => {
+                        size = Some(descriptor.size);
+                        format = Some(descriptor.format);
+                    }
+                    (Some(s), Some(f)) => {
+                        if descriptor.size != s {
+                            panic!("Block array texture requires size {:?}, but texture {:?} has size {:?}",
+                                   s,
+                                   descriptor.label,
+                                   descriptor.size
+                            );
+                        }
+                        if descriptor.format != f {
+                            should_convert = true;
+                        }
+                    }
+                    _ => {
+                        panic!("Dead branch");
+                    }
+                }
+
+                // get around dropped references and stuff
+                let data = if should_convert {
+                    &image.convert(format.unwrap()).expect("Valid texture format.").data
+                } else {
+                    &image.data
+                };
+
+
+
+                match data {
+                    None => { panic!("Should not happen")}
+                    Some(d) => {
+                        for p in d.iter() {
+                            new_data.push(*p);
+                        }
+                    }
+                }
+
+
+                block_textures.map.insert(texture_handle.clone(), i);
+
+                i += 1;
+            }
             
-            let image = image_asset.get(texture_handle).unwrap();
-            let descriptor = &image.texture_descriptor;
-            let mut should_convert = false;
-            match (size, format) {
-                (None, None) => {
-                    size = Some(descriptor.size);
-                    format = Some(descriptor.format);
-                }
-                (Some(s), Some(f)) => {
-                    if descriptor.size != s {
-                        panic!("Block array texture requires size {:?}, but texture {:?} has size {:?}",
-                               s,
-                               descriptor.label,
-                               descriptor.size
-                        );
-                    }
-                    if descriptor.format != f {
-                        should_convert = true;
-                    }
-                }
-                _ => {
-                    panic!("Dead branch");
-                }
-            }
-
-            // get around dropped references and stuff
-            let data = if should_convert {
-                &image.convert(format.unwrap()).expect("Valid texture format.").data
-            } else {
-                &image.data
-            };
-
-
-
-            match data {
-                None => { panic!("Should not happen")}
-                Some(d) => {
-                    for p in d.iter() {
-                        new_data.push(*p);
-                    }
-                }
-            }
-
-
-            block_textures.map.insert(texture_handle.clone(), i);
-
-            i += 1;
         }
     }
 
+    if visited_textures.len() == 0 {
+        panic!("Cannot create Array texture for zero textures.")
+    }
+    
     let size = Extent3d {
         width: size.unwrap().width,
         height: size.unwrap().height,

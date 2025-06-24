@@ -57,12 +57,11 @@ fn fragment(
     mesh: VertexOutput,
 ) -> @location(0) vec4<f32> {
     var index = mesh.texture_id;
-    var col = f32(index) / 3.0;
 
     // sample a 2d array texture
     return textureSample(my_array_texture, my_array_texture_sampler, mesh.uv, index);
 
-//    return vec4(mesh.uv, col, 1.0);
+//    return vec4(mesh.uv, 0.0, 1.0);
 
 //    return vec4(1.0, 1.0, 1.0, 1.0);
 }

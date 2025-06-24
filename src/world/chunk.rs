@@ -1,12 +1,14 @@
+use std::collections::HashMap;
+use bitvec::prelude::Lsb0;
 use crate::core::errors::ChunkError;
 use crate::render::material::BlockMaterial;
-use crate::render::MeshDataCache;
-use crate::world::block::BlockState;
+use crate::render::{BlockModelMinimal, MeshDataCache};
+use crate::world::block::{BlockState, Direction};
 use bevy::asset::RenderAssetUsages;
 use bevy::math::{ivec3, vec3, Vec3};
-use bevy::prelude::{Component, IVec3, Mesh, Transform};
+use bevy::prelude::{info_span, Component, IVec3, Mesh, Transform};
 use bevy::render::mesh::{Indices, PrimitiveTopology};
-use bitvec::bitvec;
+use bitvec::{bits, bitvec};
 use bitvec::field::BitField;
 use bitvec::order::Msb0;
 use bitvec::prelude::BitVec;
@@ -250,27 +252,30 @@ impl ChunkData {
             if p.block == block {
                 p.ref_count += 1;
 
-                println!("Found stone: index: {}", palette_idx);
+                println!("Found index: {}", palette_idx);
                 println!("Old id: {}", old_block);
 
                 // actually does the bit setting operation
 
                 println!("Old data: {}", &self.data[index * self.id_size..index * self.id_size + self.id_size]);
 
-                set_raw(&mut self.data, self.id_size, index * self.id_size, palette_idx + 1);
+                set_raw(&mut self.data, self.id_size, index * self.id_size, palette_idx);
 
                 println!("New data: {}", &self.data[index * self.id_size..index * self.id_size + self.id_size]);
 
                 return Ok(ret);
             }
         }
+        println!("Not in palette, adding to palette...");
         // block is not in the palette, add it to the palette.
         let block_id = self.add_palette(PaletteEntry::new(block));
         // increase palette's refcount
         self.palette[block_id].ref_count += 1;
 
+        println!("Palette: {:?}", self.palette);
+
         //update the raw data
-        set_raw(&mut self.data, self.id_size, index * self.id_size, block_id + 1);
+        set_raw(&mut self.data, self.id_size, index * self.id_size, block_id);
 
         //return old block.
         Ok(ret)
@@ -294,7 +299,7 @@ impl ChunkData {
             }
 
             // copy old data.
-            new_vec.extend_from_bitslice(&self.data[i..i+old_size]);
+            new_vec.extend_from_bitslice(&self.data[i * old_size..i * old_size + old_size]);
         }
         self.data = new_vec;
         self.id_size = new_size;
@@ -391,6 +396,19 @@ enum Facing {
     Down, // -y
 }
 
+impl From<Direction> for Facing {
+    fn from(value: Direction) -> Self {
+        match value {
+            Direction::Up => Facing::Up,
+            Direction::Down => Facing::Down,
+            Direction::North => Facing::North,
+            Direction::South => Facing::South,
+            Direction::East => Facing::East,
+            Direction::West => Facing::West,
+        }
+    }
+}
+
 
 pub type NeighborData<'a> = (&'a ChunkData, &'a ChunkData, &'a ChunkData, &'a ChunkData,&'a ChunkData, &'a ChunkData);
 
@@ -400,7 +418,7 @@ pub fn create_chunk_mesh(
     neighbors: Option<NeighborData>
 ) -> Mesh {
 
-    let now = Instant::now();
+    let span = info_span!("create_chunk_mesh").entered();
 
     // info!("Creating chunk mesh.");
 
@@ -413,7 +431,7 @@ pub fn create_chunk_mesh(
     let mut uv0s = Vec::<[f32; 2]>::new();
     let mut normals = Vec::<[f32; 3]>::new();
     let mut indices = Vec::<u32>::new();
-    let mut face_ids = Vec::<u32>::new();
+    let mut texture_ids = Vec::<u32>::new();
 
     
     // make sure that index points to the first bit of the id.
@@ -421,6 +439,8 @@ pub fn create_chunk_mesh(
     // debug!("Length of working_data: {}", working_data.len());
 
     //TODO: optimize in the case of single chunks (chunks made up of just one block)
+    
+    let mut indices_offset = 0;
     
     for i in 0..ChunkData::BLOCKS_PER_CHUNK {
 
@@ -431,34 +451,58 @@ pub fn create_chunk_mesh(
             continue;
         }
         let block_model = model_map.get(&block_id.block).unwrap();
-        let array_id = block_model.index;
 
-        // println!("Block is {:?}", block);
-
-
-        // println!("Block is {:?}", block);
         let (x, y, z) = index_to_xyz(i);
-        // println!("{x}, {y}, {z}, {index}");
 
+        // iter over each face
+        for face in block_model.face_iter() {
+            if let Some(dir) = face.get_cull_mode() {
+                // cull face - block adjacent is solid
+                if !should_make_face(dir.into(), &chunk, x, y, z, neighbors, &model_map) {
+                    continue;
+                }
+            }
+            // else make a new face
+            let (
+                mut face_pos, 
+                mut face_uv0, 
+                mut face_normal, 
+                mut face_index, 
+                mut face_texture_ids
+            ) = face.get_face_data(vec3(x as f32, y as f32, z as f32), indices_offset);
 
-        if should_make_face(Facing::North, &chunk, x, y, z, neighbors) {
-            faces.push((Facing::North, vec3(x as f32, y as f32, z as f32), array_id));
+            indices_offset += face_pos.len() as u32;
+
+            positions.append(&mut face_pos);
+            uv0s.append(&mut face_uv0);
+            normals.append(&mut face_normal);
+            indices.append(&mut face_index);
+            texture_ids.append(&mut face_texture_ids);
+
         }
-        if should_make_face(Facing::South, &chunk, x, y, z, neighbors) {
-            faces.push((Facing::South, vec3(x as f32, y as f32, z as f32), array_id));
-        }
-        if should_make_face(Facing::East, &chunk, x, y, z, neighbors) {
-            faces.push((Facing::East, vec3(x as f32, y as f32, z as f32), array_id));
-        }
-        if should_make_face(Facing::West, &chunk, x, y, z, neighbors) {
-            faces.push((Facing::West, vec3(x as f32, y as f32, z as f32), array_id));
-        }
-        if should_make_face(Facing::Up, &chunk, x, y, z, neighbors) {
-            faces.push((Facing::Up, vec3(x as f32, y as f32, z as f32), array_id));
-        }
-        if should_make_face(Facing::Down, &chunk, x, y, z, neighbors) {
-            faces.push((Facing::Down, vec3(x as f32, y as f32, z as f32), array_id));
-        }
+        
+        
+        
+
+        // cull faces
+        // if should_make_face(Facing::North, &chunk, x, y, z, neighbors) {
+        //     faces.push((Facing::North, vec3(x as f32, y as f32, z as f32), array_id));
+        // }
+        // if should_make_face(Facing::South, &chunk, x, y, z, neighbors) {
+        //     faces.push((Facing::South, vec3(x as f32, y as f32, z as f32), array_id));
+        // }
+        // if should_make_face(Facing::East, &chunk, x, y, z, neighbors) {
+        //     faces.push((Facing::East, vec3(x as f32, y as f32, z as f32), array_id));
+        // }
+        // if should_make_face(Facing::West, &chunk, x, y, z, neighbors) {
+        //     faces.push((Facing::West, vec3(x as f32, y as f32, z as f32), array_id));
+        // }
+        // if should_make_face(Facing::Up, &chunk, x, y, z, neighbors) {
+        //     faces.push((Facing::Up, vec3(x as f32, y as f32, z as f32), array_id));
+        // }
+        // if should_make_face(Facing::Down, &chunk, x, y, z, neighbors) {
+        //     faces.push((Facing::Down, vec3(x as f32, y as f32, z as f32), array_id));
+        // }
     }
     
     
@@ -473,47 +517,44 @@ pub fn create_chunk_mesh(
     //     index = (working_data.leading_zeros() / chunk.id_size) * chunk.id_size;
     // }
 
-    let after_faces = now.elapsed().as_secs_f64();
 
 
-    let mut index_offset = 0;
-    for (dir, pos_offset, array_id) in faces {
-
-        // face data
-        let (face_pos, face_uv0, face_normal, face_index) = face_data(dir);
-        
-        // offsets and adds vertices
-        for j in 0..4 {
-            let (pos, uv0, normal) = (face_pos[j], face_uv0[j], face_normal[j]);
-            // add offset for pos
-            let new_pos = [pos[0] + pos_offset.x, pos[1] + pos_offset.y, pos[2] + pos_offset.z];
-            positions.push(new_pos);
-            uv0s.push(uv0);
-            normals.push(normal);
-            // array texture id
-            face_ids.push(array_id);
-        }
-        // add index offset for indices
-        for j in 0..6 {
-            indices.push(face_index[j] + index_offset);
-        }
-
-        index_offset += 4;
-    }
+    // let mut index_offset = 0;
+    // for (dir, pos_offset, array_id) in faces {
+    // 
+    //     // face data
+    //     let (face_pos, face_uv0, face_normal, face_index) = face_data(dir);
+    //     
+    //     // offsets and adds vertices
+    //     for j in 0..4 {
+    //         let (pos, uv0, normal) = (face_pos[j], face_uv0[j], face_normal[j]);
+    //         // add offset for pos
+    //         let new_pos = [pos[0] + pos_offset.x, pos[1] + pos_offset.y, pos[2] + pos_offset.z];
+    //         positions.push(new_pos);
+    //         uv0s.push(uv0);
+    //         normals.push(normal);
+    //         // array texture id
+    //         face_ids.push(array_id);
+    //     }
+    //     // add index offset for indices
+    //     for j in 0..6 {
+    //         indices.push(face_index[j] + index_offset);
+    //     }
+    // 
+    //     index_offset += 4;
+    // }
     
     // info!("Finished creating chunk mesh");
 
-    let after_vertices = now.elapsed().as_secs_f64();
 
     // creates the chunk mesh
     let ret = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD)
         .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
-        .with_inserted_attribute(BlockMaterial::ATTRIBUTE_ARRAY_ID, face_ids)
+        .with_inserted_attribute(BlockMaterial::ATTRIBUTE_ARRAY_ID, texture_ids)
         .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uv0s)
         .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
         .with_inserted_indices(Indices::U32(indices));
 
-    let last = now.elapsed().as_secs_f64();
 
     // let clone = after_clone;
     // let face = after_faces - after_clone;
@@ -569,7 +610,13 @@ fn face_data(facing: Facing) -> FaceData {
     }
 }
 
-fn should_make_face(facing: Facing, chunk: &ChunkData, x: usize, y: usize, z: usize, neighbors: Option<NeighborData>) -> bool {
+fn should_make_face(
+    facing: Facing, 
+    chunk: &ChunkData, 
+    x: usize, y: usize, z: usize, 
+    neighbors: Option<NeighborData>,
+    model_map: &HashMap<BlockState, BlockModelMinimal>
+) -> bool {
 
     let last = ChunkData::CHUNK_SIZE - 1;
     
@@ -599,37 +646,52 @@ fn should_make_face(facing: Facing, chunk: &ChunkData, x: usize, y: usize, z: us
     // get the value at new_pos
     let (new_x, new_y, new_z) = new_block(facing, x as isize, y as isize, z as isize);
     // Check west data.
-    if neighbors.is_some() {
+    let (block, queried_chunk) = if neighbors.is_some() {
         let (north, south, east, west, up, down) = neighbors.unwrap();
 
-        let block = if new_z < 0 {
-            south.block_at(new_x as usize, new_y as usize, last)
+        if new_z < 0 {
+            (south.block_at(new_x as usize, new_y as usize, last), south)
         }
         else if new_z > last as isize {
-            north.block_at(new_x as usize, new_y as usize, 0)
+            (north.block_at(new_x as usize, new_y as usize, 0), north)
         }
         else if new_x < 0 {
-            west.block_at(last, new_y as usize, new_z as usize)
+            (west.block_at(last, new_y as usize, new_z as usize), west)
         }
         else if new_x > last as isize {
-            east.block_at(0, new_y as usize, new_z as usize)
+            (east.block_at(0, new_y as usize, new_z as usize), east)
         }
         else if new_y < 0 {
-            down.block_at(new_x as usize, last, new_z as usize)
+            (down.block_at(new_x as usize, last, new_z as usize), down)
         }
         else if new_y > last as isize {
-            up.block_at(new_x as usize, 0, new_z as usize)
+            (up.block_at(new_x as usize, 0, new_z as usize), up)
         }
         else {
-            chunk.block_at(new_x as usize, new_y as usize, new_z as usize)
-        };
-        block == 0
+            (chunk.block_at(new_x as usize, new_y as usize, new_z as usize), chunk)
+        }
     }
     else {
-        let block = chunk.block_at(new_x as usize, new_y as usize, new_z as usize);
-        block == 0
+        (chunk.block_at(new_x as usize, new_y as usize, new_z as usize), chunk)
+    };
+    
+    let queried_side = match facing {
+        Facing::North => Direction::South,
+        Facing::South => Direction::North,
+        Facing::East => Direction::West,
+        Facing::West => Direction::East,
+        Facing::Up => Direction::Down,
+        Facing::Down => Direction::Up,
+    };
+    
+    let state = &queried_chunk.lookup_palette(block).unwrap().block;
+    let model = model_map.get(&state);
+    // no model? treat like air
+    if model.is_none() {
+        return true;
     }
     
+    !model.unwrap().is_full(queried_side)
 }
 
 // no guarantee these are in bounds

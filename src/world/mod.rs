@@ -4,8 +4,10 @@ use std::sync::{Arc, RwLock};
 use std::time::Instant;
 use bevy::asset::AssetContainer;
 use bevy::input::mouse::AccumulatedMouseMotion;
+use bevy::math::bounding::{Aabb3d, IntersectsVolume};
 use bevy::pbr::wireframe::{NoWireframe, WireframeConfig};
 use bevy::prelude::*;
+use bevy::render::primitives::Aabb;
 use bevy::tasks::{block_on, AsyncComputeTaskPool, Task};
 use bevy::tasks::futures_lite::future;
 use bevy::window::{CursorGrabMode, PrimaryWindow};
@@ -15,7 +17,7 @@ use bitvec::view::BitViewSized;
 use rand::distr::Uniform;
 use rand::Rng;
 use cache::ChunkCache;
-use crate::asset::block::{BlockModel};
+use crate::asset::block::{BlockModelAsset};
 use crate::render::material::BlockMaterial;
 use crate::asset::procedural::BlockTextures;
 use crate::core::event::PlayerMovedEvent;
@@ -46,7 +48,7 @@ impl Plugin for GameWorldPlugin {
             .add_systems(FixedUpdate, queue_mesh_creation)
             .add_systems(Update, (temp_create_chunk, temp_set_block, receive_generated_chunks, create_chunk_entities).chain())
             .add_systems(Update, (receive_generated_meshes, upload_meshes))
-            .add_systems(Update, on_player_moved)
+            .add_systems(Update, track_chunks_around_player)
             .add_systems(OnEnter(MainGameState::InGame), (setup, grab_cursor, create_world))
         ;
     }
@@ -269,6 +271,8 @@ fn upload_meshes(
     mut meshes: ResMut<Assets<Mesh>>,
     block_textures: Res<BlockTextures>,
 ) {
+    let span = info_span!("upload_meshes").entered();
+
     let (mut chunk_queue, chunk_cache) = world.into_inner();
 
     // if !chunk_queue.finished_meshing.is_empty() {
@@ -518,7 +522,7 @@ fn temp_set_block(
 
             info!("Old: {:?}", component.get_block(pos_in_chunk));
 
-            let stone = BlockState::new("stone", block_reg.as_ref()).unwrap();
+            let stone = BlockState::new("oak_slab", block_reg.as_ref()).unwrap();
 
 
             match component.set_block(pos_in_chunk, stone) {
@@ -541,12 +545,13 @@ fn temp_set_block(
 }
 
 
-fn on_player_moved(
+fn track_chunks_around_player(
+    mut commands: Commands,
     mut event: EventReader<PlayerMovedEvent>,
-    mut world: Single<(&GameWorld, &mut ChunkQueue, &ChunkCache)>,
+    mut world: Single<(&GameWorld, &mut ChunkQueue, &mut ChunkCache)>,
     block_reg: Res<RegistryHandle<Block>>,
 ) {
-    let (game_world, mut chunk_queue, chunk_cache) = world.into_inner();
+    let (game_world, mut chunk_queue, mut chunk_cache) = world.into_inner();
     for e in event.read() {
         let old_chunk = chunk::pos_to_chunk_pos(e.old.as_ivec3());
         let new_chunk = chunk::pos_to_chunk_pos(e.new.as_ivec3());
@@ -554,9 +559,39 @@ fn on_player_moved(
             continue;
         }
 
-        // chunk changed - generate new chunks
+        // chunk changed - update what chunks are tracked
         let rad = 5;
 
+        let aabb = Aabb3d {
+            min: (new_chunk - rad).as_vec3a(),
+            max: (new_chunk + rad).as_vec3a()
+        };
+        
+        let mut to_remove = VecDeque::new();
+        {
+
+            for (pos, chunk) in chunk_cache.iter() {
+                let point_aabb = Aabb3d {
+                    min: pos.as_vec3a(),
+                    max: pos.as_vec3a()
+                };
+                // if intersects, then this chunk is in range of the player. continue.
+                if aabb.intersects(&point_aabb) {
+                    continue;
+                }
+                // else let's remove this chunk.
+                // TODO: create queue for this as chunks unloading need to be saved to disk
+                to_remove.push_back(pos.clone());
+            }
+        }
+        // split to make sure the immutable borrow in iter() is dropped.
+        while !to_remove.is_empty() {
+            let pos = to_remove.pop_front().unwrap();
+            chunk_cache.remove_from_cache(pos, &mut commands);
+        }
+
+
+        // create brand new chunks
         for x in -rad..rad + 1 {
             for z in -rad..rad + 1 {
                 for y in -rad..rad + 1 {
@@ -578,6 +613,13 @@ fn on_player_moved(
                 }
             }
         }
+
+
+
+
+
+
+
     }
 }
 
@@ -663,6 +705,9 @@ pub fn make_data_chaos(block_reg: &Registry<Block>) -> ChunkData {
 
 
 pub fn make_box(block_reg: &Registry<Block>) -> ChunkData {
+
+    let span = info_span!("make_box").entered();
+
     let mut palette = vec![
         PaletteEntry::new(BlockState::new("air", block_reg).unwrap()),
         PaletteEntry::new(BlockState::new("stone", block_reg).unwrap()),

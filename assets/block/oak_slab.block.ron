@@ -19,7 +19,7 @@ Block(
             state: {
                 "half": "bottom"
             },
-            model: "block/oak_planks"
+            model: "block/oak_slab_bottom"
         ),
         ModelDef(
             state: {

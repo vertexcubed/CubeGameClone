@@ -1,0 +1,164 @@
+BlockModel(
+    parent: None,
+    faces: [
+        // facing +z / north
+        Face(
+            type: Quad,
+            vertices: [
+                Vertex(
+                    pos: (0.0, 0.0, 1.0),
+                    uv: (0.0, 0.0)
+                ),
+                Vertex(
+                    pos: (1.0, 0.0, 1.0),
+                    uv: (1.0, 0.0)
+                ),
+                Vertex(
+                    pos: (1.0, 1.0, 1.0),
+                    uv: (1.0, 1.0)
+                ),
+                Vertex(
+                    pos: (0.0, 1.0, 1.0),
+                    uv: (0.0, 1.0)
+                ),
+            ],
+            normal: (0.0, 0.0, 1.0),
+            texture: "N",
+            cull_mode: Some(North)
+        ),
+        // facing -z / south
+        Face(
+            type: Quad,
+            vertices: [
+                Vertex(
+                    pos: (1.0, 0.0, 0.0),
+                    uv: (0.0, 0.0)
+                ),
+                Vertex(
+                    pos: (0.0, 0.0, 0.0),
+                    uv: (1.0, 0.0)
+                ),
+                Vertex(
+                    pos: (0.0, 1.0, 0.0),
+                    uv: (1.0, 1.0)
+                ),
+                Vertex(
+                    pos: (1.0, 1.0, 0.0),
+                    uv: (0.0, 1.0)
+                ),
+            ],
+            normal: (0.0, 0.0, -1.0),
+            texture: "S",
+            cull_mode: Some(South)
+        ),
+        // facing +x / east
+        Face(
+            type: Quad,
+            vertices: [
+                Vertex(
+                    pos: (1.0, 0.0, 1.0),
+                    uv: (0.0, 0.0)
+                ),
+                Vertex(
+                    pos: (1.0, 0.0, 0.0),
+                    uv: (1.0, 0.0)
+                ),
+                Vertex(
+                    pos: (1.0, 1.0, 0.0),
+                    uv: (1.0, 1.0)
+                ),
+                Vertex(
+                    pos: (1.0, 1.0, 1.0),
+                    uv: (0.0, 1.0)
+                ),
+            ],
+            normal: (1.0, 0.0, 0.0),
+            texture: "E",
+            cull_mode: Some(East)
+        ),
+        // facing -x / west
+        Face(
+            type: Quad,
+            vertices: [
+                Vertex(
+                    pos: (0.0, 0.0, 0.0),
+                    uv: (0.0, 0.0)
+                ),
+                Vertex(
+                    pos: (0.0, 0.0, 1.0),
+                    uv: (1.0, 0.0)
+                ),
+                Vertex(
+                    pos: (0.0, 1.0, 1.0),
+                    uv: (1.0, 1.0)
+                ),
+                Vertex(
+                    pos: (0.0, 1.0, 0.0),
+                    uv: (0.0, 1.0)
+                ),
+            ],
+            normal: (-1.0, 0.0, 0.0),
+            texture: "W",
+            cull_mode: Some(West)
+        ),
+
+        // facing +y / up
+        Face(
+            type: Quad,
+            vertices: [
+                Vertex(
+                    pos: (0.0, 1.0, 1.0),
+                    uv: (0.0, 0.0)
+                ),
+                Vertex(
+                    pos: (1.0, 1.0, 1.0),
+                    uv: (1.0, 0.0)
+                ),
+                Vertex(
+                    pos: (1.0, 1.0, 0.0),
+                    uv: (1.0, 1.0)
+                ),
+                Vertex(
+                    pos: (0.0, 1.0, 0.0),
+                    uv: (0.0, 1.0)
+                ),
+            ],
+            normal: (0.0, 1.0, 0.0),
+            texture: "U",
+            cull_mode: Some(Up)
+        ),
+        // facing -y / down
+        Face(
+            type: Quad,
+            vertices: [
+                Vertex(
+                    pos: (0.0, 0.0, 0.0),
+                    uv: (0.0, 0.0)
+                ),
+                Vertex(
+                    pos: (1.0, 0.0, 0.0),
+                    uv: (1.0, 0.0)
+                ),
+                Vertex(
+                    pos: (1.0, 0.0, 1.0),
+                    uv: (1.0, 1.0)
+                ),
+                Vertex(
+                    pos: (0.0, 0.0, 1.0),
+                    uv: (0.0, 1.0)
+                ),
+            ],
+            normal: (0.0, -1.0, 0.0),
+            texture: "D",
+            cull_mode: Some(Down)
+        )
+    ],
+    full_sides: [
+        North,
+        South,
+        East,
+        West,
+        Up,
+        Down
+    ]
+)

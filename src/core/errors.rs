@@ -29,6 +29,18 @@ pub enum RegistryError {
 
 #[derive(Debug, thiserror::Error)]
 pub enum BlockStateError {
-    #[error("Invalid block id: {0}")]
+    #[error("Invalid block id: {0}.")]
     InvalidId(String)
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum BlockModelError {
+    #[error("Invalid face: {0}.")]
+    InvalidFace(String),
+    #[error("Could not find texture with key {0}.")]
+    KeyNotFound(String),
+    #[error("Texture {0} not found in block array texture.")]
+    TextureNotFound(String),
+    #[error("Cannot depend on model {0}, as this creates a circular dependency.")]
+    CircularDependency(String)
 }

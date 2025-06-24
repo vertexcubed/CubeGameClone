@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use bevy::prelude::error;
+use serde::{Deserialize, Serialize};
 use crate::core::errors::BlockStateError;
 use crate::core::errors::BlockStateError::InvalidId;
 use crate::registry::block::Block;
@@ -54,4 +55,13 @@ impl BlockState {
     pub fn is_air(&self) -> bool {
         self.block == "air"
     }
+}
+#[derive(Debug, Copy, Clone, PartialEq, Deserialize, Serialize)]
+pub enum Direction {
+    Up,
+    Down,
+    North,
+    South,
+    East,
+    West
 }

@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::iter::Map;
 use crate::asset::AssetLoaderError::{InvalidRon, Io};
+use crate::world::block::Direction;
 
 #[derive(Debug, Hash, Clone, PartialEq, Eq, Asset, TypePath, Serialize, Deserialize)]
 #[serde(rename="Block")]
@@ -20,7 +21,7 @@ pub struct BlockAsset {
     pub hardness: u32,
     pub states: Vec<BlockStateAsset>,
     pub default_state: BTreeMap<String, String>,
-    pub models: Vec<BlockModelAsset>
+    pub models: Vec<BlockStateModelDef>
 }
 
 #[derive(Debug, Hash, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -32,11 +33,11 @@ pub struct BlockStateAsset {
 
 #[derive(Debug, Hash, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename="ModelDef")]
-pub struct BlockModelAsset {
+pub struct BlockStateModelDef {
     pub state: BTreeMap<String, String>,
     model: String,
     #[serde(skip)]
-    pub model_handle: Handle<BlockModel>
+    pub model_handle: Handle<BlockModelAsset>
 }
 
 
@@ -63,8 +64,6 @@ impl AssetLoader for BlockLoader {
             let mut bytes = Vec::new();
             reader.read_to_end(&mut bytes).await?;
             let mut block = ron::de::from_bytes::<BlockAsset>(&bytes)?;
-            
-            println!("Block: {:?}", block);
             
             validate_state(block.id.as_str(), &block.default_state, &block.states)?;
 
@@ -113,18 +112,56 @@ fn validate_state(id: &str, state: &BTreeMap<String, String>, state_def: &Vec<Bl
     Ok(())
 }
 
-
-#[derive(Debug, Hash, Clone, PartialEq, Eq, Asset, TypePath, Deserialize)]
-pub struct BlockModel {
-    texture: String,
+#[derive(Debug, Clone, PartialEq, Asset, TypePath, Deserialize)]
+#[serde(rename="BlockModel")]
+pub struct BlockModelAsset {
+    pub parent: Option<String>,
     #[serde(skip)]
-    pub texture_handle: Handle<Image>
+    pub parent_handle: Option<Handle<BlockModelAsset>>,
+    #[serde(default)]
+    pub faces: Vec<BlockModelFace>,
+    #[serde(default)]
+    pub full_sides: Vec<Direction>,
+    #[serde(default)]
+    pub textures: BTreeMap<String, String>,
+    #[serde(skip)]
+    pub texture_handles: BTreeMap<String, Handle<Image>>,
 }
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(rename="Face")]
+pub struct BlockModelFace {
+    #[serde(rename="type")]
+    pub face_type: FaceType,
+    pub vertices: Vec<ModelVertex>,
+    pub normal: Vec3,
+    pub texture: String,
+    pub cull_mode: Option<Direction>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(rename="Vertex")]
+pub struct ModelVertex {
+    pub pos: Vec3,
+    pub uv: Vec2,
+}
+
+#[derive(Debug, Hash, Clone, PartialEq, Deserialize)]
+pub enum FaceType {
+    Quad,
+    Triangle
+}
+
+
+
+
+
+
 
 #[derive(Default)]
 pub struct BlockModelLoader;
 impl AssetLoader for BlockModelLoader {
-    type Asset = BlockModel;
+    type Asset = BlockModelAsset;
     type Settings = ();
     type Error = AssetLoaderError;
 
@@ -132,12 +169,26 @@ impl AssetLoader for BlockModelLoader {
         Box::pin(async move {
             let mut bytes = Vec::new();
             reader.read_to_end(&mut bytes).await?;
-            let mut model = ron::de::from_bytes::<BlockModel>(&bytes)?;
+            let mut model = ron::de::from_bytes::<BlockModelAsset>(&bytes)?;
 
+            println!("Model: {:?}", model);
+            
             // get the model handle from the model path
-            let texture_str = format!("texture/{}.png", model.texture.clone());
-            model.texture_handle = load_context.load(AssetPath::parse(texture_str.as_str()));
+            // let texture_str = format!("texture/{}.png", model.texture.clone());
+            // model.texture_handle = load_context.load(AssetPath::parse(texture_str.as_str()));
 
+            // setup parent.
+            if let Some(parent) = &model.parent {
+                let parent_str = format!("model/{}.model.ron", parent);
+                model.parent_handle = Some(load_context.load(AssetPath::parse(parent_str.as_str())));
+            }
+            
+            // setup texture map
+            for (k, v) in model.textures.iter() {
+                let texture_str = format!("texture/{}.png", v.clone());
+                model.texture_handles.insert(k.clone(), load_context.load(AssetPath::parse(texture_str.as_str())));
+            }
+            
 
             Ok(model)
         })

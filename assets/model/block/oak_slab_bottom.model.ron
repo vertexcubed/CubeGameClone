@@ -1,5 +1,5 @@
 BlockModel(
-    parent: Some("block/base/full"),
+    parent: Some("block/base/slab_bottom"),
 
     textures: {
         "N": "oak_planks",
