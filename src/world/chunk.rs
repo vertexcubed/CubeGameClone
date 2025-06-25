@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use bitvec::prelude::Lsb0;
 use crate::core::errors::ChunkError;
 use crate::render::material::BlockMaterial;
-use crate::render::{BlockModelMinimal, MeshDataCache};
+use crate::render::block::MeshDataCache;
 use crate::world::block::{BlockState, Direction};
 use bevy::asset::RenderAssetUsages;
 use bevy::math::{ivec3, vec3, Vec3};
@@ -15,6 +15,8 @@ use bitvec::prelude::BitVec;
 use bitvec::view::BitViewSized;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
+use crate::math::Vec3Ext;
+use crate::render::block::BlockModelMinimal;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PaletteEntry {
@@ -368,8 +370,8 @@ pub fn chunk_pos_to_transform(pos: IVec3) -> Transform {
     Transform::from_xyz((pos.x * ChunkData::CHUNK_SIZE as i32) as f32, (pos.y * ChunkData::CHUNK_SIZE as i32) as f32, (pos.z * ChunkData::CHUNK_SIZE as i32) as f32)
 }
 pub fn transform_to_chunk_pos(transform: &Transform) -> IVec3 {
-    let vec = transform.translation;
-    pos_to_chunk_pos(vec.as_ivec3())
+    let vec = transform.translation.as_block_pos();
+    pos_to_chunk_pos(vec)
 }
 pub fn pos_to_chunk_pos(pos: IVec3) -> IVec3 {
     let vec = pos.as_vec3();
@@ -377,7 +379,7 @@ pub fn pos_to_chunk_pos(pos: IVec3) -> IVec3 {
 }
 
 pub fn pos_to_chunk_local(pos: IVec3) -> IVec3 {
-    pos - (32 * pos_to_chunk_pos(pos))
+    pos - (ChunkData::CHUNK_SIZE as i32 * pos_to_chunk_pos(pos))
 }
 
 //===============
@@ -420,23 +422,14 @@ pub fn create_chunk_mesh(
 
     let span = info_span!("create_chunk_mesh").entered();
 
-    // info!("Creating chunk mesh.");
-
     let model_map = cache.inner.load();
     
-    // faces to make a mesh for
-    let mut faces = Vec::<(Facing, Vec3, u32)>::new();
-
     let mut positions = Vec::<[f32; 3]>::new();
     let mut uv0s = Vec::<[f32; 2]>::new();
     let mut normals = Vec::<[f32; 3]>::new();
     let mut indices = Vec::<u32>::new();
     let mut texture_ids = Vec::<u32>::new();
-
     
-    // make sure that index points to the first bit of the id.
-    // let mut index = (working_data.leading_zeros() / chunk.id_size) * chunk.id_size;
-    // debug!("Length of working_data: {}", working_data.len());
 
     //TODO: optimize in the case of single chunks (chunks made up of just one block)
     
@@ -480,73 +473,8 @@ pub fn create_chunk_mesh(
             texture_ids.append(&mut face_texture_ids);
 
         }
-        
-        
-        
-
-        // cull faces
-        // if should_make_face(Facing::North, &chunk, x, y, z, neighbors) {
-        //     faces.push((Facing::North, vec3(x as f32, y as f32, z as f32), array_id));
-        // }
-        // if should_make_face(Facing::South, &chunk, x, y, z, neighbors) {
-        //     faces.push((Facing::South, vec3(x as f32, y as f32, z as f32), array_id));
-        // }
-        // if should_make_face(Facing::East, &chunk, x, y, z, neighbors) {
-        //     faces.push((Facing::East, vec3(x as f32, y as f32, z as f32), array_id));
-        // }
-        // if should_make_face(Facing::West, &chunk, x, y, z, neighbors) {
-        //     faces.push((Facing::West, vec3(x as f32, y as f32, z as f32), array_id));
-        // }
-        // if should_make_face(Facing::Up, &chunk, x, y, z, neighbors) {
-        //     faces.push((Facing::Up, vec3(x as f32, y as f32, z as f32), array_id));
-        // }
-        // if should_make_face(Facing::Down, &chunk, x, y, z, neighbors) {
-        //     faces.push((Facing::Down, vec3(x as f32, y as f32, z as f32), array_id));
-        // }
     }
     
-    
-    // while (index + chunk.id_size) < working_data.len() {
-    // 
-    //     
-    // 
-    //     // zero out nth block and move on.
-    //     for j in 0..chunk.id_size {
-    //         working_data.set(index + j, false);
-    //     }
-    //     index = (working_data.leading_zeros() / chunk.id_size) * chunk.id_size;
-    // }
-
-
-
-    // let mut index_offset = 0;
-    // for (dir, pos_offset, array_id) in faces {
-    // 
-    //     // face data
-    //     let (face_pos, face_uv0, face_normal, face_index) = face_data(dir);
-    //     
-    //     // offsets and adds vertices
-    //     for j in 0..4 {
-    //         let (pos, uv0, normal) = (face_pos[j], face_uv0[j], face_normal[j]);
-    //         // add offset for pos
-    //         let new_pos = [pos[0] + pos_offset.x, pos[1] + pos_offset.y, pos[2] + pos_offset.z];
-    //         positions.push(new_pos);
-    //         uv0s.push(uv0);
-    //         normals.push(normal);
-    //         // array texture id
-    //         face_ids.push(array_id);
-    //     }
-    //     // add index offset for indices
-    //     for j in 0..6 {
-    //         indices.push(face_index[j] + index_offset);
-    //     }
-    // 
-    //     index_offset += 4;
-    // }
-    
-    // info!("Finished creating chunk mesh");
-
-
     // creates the chunk mesh
     let ret = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD)
         .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
@@ -554,14 +482,7 @@ pub fn create_chunk_mesh(
         .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uv0s)
         .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
         .with_inserted_indices(Indices::U32(indices));
-
-
-    // let clone = after_clone;
-    // let face = after_faces - after_clone;
-    // let vert = after_vertices - after_faces;
-    // let mesh = last - after_vertices;
-    // info!("Clone took {}. Face took {}. Vert took {}. Mesh took {}.", clone, face, vert, mesh);
-
+    
     ret
 }
 

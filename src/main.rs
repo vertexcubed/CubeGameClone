@@ -4,6 +4,7 @@ mod registry;
 mod world;
 mod render;
 mod ui;
+mod math;
 
 use crate::registry::RegistryPlugin;
 use crate::render::pipeline::GameRenderPipelinePlugin;

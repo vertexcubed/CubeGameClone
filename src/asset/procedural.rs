@@ -44,19 +44,19 @@ pub fn create_block_array_texture(
     let mut visited_models = HashSet::new();
     let mut visited_textures = HashSet::new();
     for h in all_block_defs.inner.iter() {
-        
+
         for model in block_asset.get(h).unwrap().models.iter() {
             // if we've already visited this model handle? continue on.
             if visited_models.contains(&model.model_handle) {
                 continue;
             }
             visited_models.insert(model.model_handle.clone());
-            
-            let model = 
+
+            let model =
                 block_model_asset.get(
                     &model.model_handle
                 ).unwrap();
-            
+
             for (k, texture_handle) in model.texture_handles.iter() {
                 // if we've already added this texture to the array texture? continue on.
                 if visited_textures.contains(texture_handle) {
@@ -113,14 +113,14 @@ pub fn create_block_array_texture(
 
                 i += 1;
             }
-            
+
         }
     }
 
     if visited_textures.len() == 0 {
         panic!("Cannot create Array texture for zero textures.")
     }
-    
+
     let size = Extent3d {
         width: size.unwrap().width,
         height: size.unwrap().height,

@@ -3,6 +3,7 @@ use std::f32::consts::PI;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 use bevy::asset::AssetContainer;
+use bevy::color::palettes::css;
 use bevy::input::mouse::AccumulatedMouseMotion;
 use bevy::math::bounding::{Aabb3d, IntersectsVolume};
 use bevy::pbr::wireframe::{NoWireframe, WireframeConfig};
@@ -22,9 +23,11 @@ use crate::render::material::BlockMaterial;
 use crate::asset::procedural::BlockTextures;
 use crate::core::event::PlayerMovedEvent;
 use crate::core::state::MainGameState;
+use crate::math::{ray, Vec3Ext};
+use crate::math::ray::RayResult;
 use crate::registry::block::Block;
 use crate::registry::{RegistryHandle, Registry};
-use crate::render::MeshDataCache;
+use crate::render::block::MeshDataCache;
 use crate::world::block::BlockState;
 use crate::world::camera::{CameraSettings, MainCamera};
 use crate::world::chunk::{ChunkComponent, ChunkData, ChunkNeedsMeshing, PaletteEntry};
@@ -44,8 +47,8 @@ impl Plugin for GameWorldPlugin {
             // temp
             .init_resource::<StartedGenerating>()
 
-            .add_systems(Update, (handle_input, ))
-            .add_systems(FixedUpdate, queue_mesh_creation)
+            .add_systems(Update, (handle_input, raycast))
+            .add_systems(FixedUpdate, (queue_mesh_creation, ))
             .add_systems(Update, (temp_create_chunk, temp_set_block, receive_generated_chunks, create_chunk_entities).chain())
             .add_systems(Update, (receive_generated_meshes, upload_meshes))
             .add_systems(Update, track_chunks_around_player)
@@ -114,6 +117,72 @@ fn handle_input(
 }
 
 
+fn raycast(
+    mut transform: Single<&mut Transform, (With<MainCamera>, Without<CursorTemp>)>,
+    chunk_cache: Single<&ChunkCache>,
+    q_chunks: Query<&ChunkComponent>,
+    kb_input: Res<ButtonInput<KeyCode>>,
+
+    sphere: Single<(&mut Transform, &mut Visibility, &mut CursorTemp)>,
+
+    mut gizmos: Gizmos,
+
+
+    mut commands: Commands,
+) {
+
+    // if !kb_input.just_pressed(KeyCode::KeyF) {
+    //     return;
+    // }
+
+    let (mut sphere, mut sphere_vis, mut cursor) = sphere.into_inner();
+
+    let distance = 5.0;
+    let view_dir = transform.forward().as_vec3();
+    let pos = transform.translation;
+
+    // gizmos.line(pos, pos + (view_dir * distance), css::GREEN);
+
+
+    let result = ray::block_raycast(pos, view_dir, distance, |b_pos| {
+        // println!("Testing block {}", b_pos);
+
+        let voxel_center = b_pos.as_vec3() + 0.5;
+        // gizmos.cuboid(Transform::from_translation(voxel_center).with_scale(Vec3::splat(1.0)), css::PINK);
+
+        let chunk = chunk::pos_to_chunk_pos(b_pos);
+        let local = chunk::pos_to_chunk_local(b_pos);
+        let entity = chunk_cache.get_chunk(chunk);
+        if entity.is_none() {
+            return false;
+        }
+        let component = q_chunks.get(entity.unwrap()).unwrap();
+        let block = component.get_block(local);
+        // println!("State: {:?}", block);
+        !block.is_air()
+    });
+    // println!("Result: {:?}", result);
+    if let Ok(RayResult::Hit(pos, b_pos)) = result {
+        *sphere_vis = Visibility::Visible;
+        sphere.translation = pos;
+        cursor.look_pos = Some(b_pos);
+        cursor.surface = Some(pos);
+
+        let chunk = chunk::pos_to_chunk_pos(b_pos);
+        let local = chunk::pos_to_chunk_local(b_pos);
+        let entity = chunk_cache.get_chunk(chunk);
+        let component = q_chunks.get(entity.unwrap()).unwrap();
+        let block = component.get_block(local);
+
+        cursor.look_block = Some(block);
+    }
+    else {
+        *sphere_vis = Visibility::Hidden;
+        *cursor = CursorTemp::default();
+    }
+}
+
+
 fn grab_cursor(
     mut window: Single<&mut Window, With<PrimaryWindow>>,
 ) {
@@ -122,11 +191,21 @@ fn grab_cursor(
     // also hide the cursor
     window.cursor_options.visible = false;
 }
+#[derive(Component, Default)]
+pub struct CursorTemp {
+    pub look_pos: Option<IVec3>,
+    pub look_block: Option<BlockState>,
+    pub surface: Option<Vec3>
+}
 
 // runs once when InGame reached
 fn setup(
     mut commands: Commands,
     camera_settings: Res<CameraSettings>,
+
+
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut meshes: ResMut<Assets<Mesh>>,
 ) {
     info!("Loading world...");
     commands.spawn((
@@ -142,6 +221,13 @@ fn setup(
     commands.spawn((
         DirectionalLight::default(),
         Transform::from_xyz(25.0, 50.0, 10.0).looking_at(Vec3::ZERO, Vec3::Y)
+    ));
+
+    commands.spawn((
+        CursorTemp::default(),
+        Transform::from_xyz(0.0, 0.0, 0.0),
+        MeshMaterial3d(materials.add(Color::srgb(1.0, 0.0, 0.0))),
+        Mesh3d(meshes.add(Sphere {radius: 0.125}.mesh())),
     ));
 
 }
@@ -491,7 +577,7 @@ fn temp_set_block(
 
     if kb_input.just_pressed(KeyCode::KeyV) {
         let camera_chunk = chunk::transform_to_chunk_pos(&camera);
-        let pos = camera.translation.as_ivec3();
+        let pos = camera.translation.floor().as_ivec3();
         let pos_in_chunk = chunk::pos_to_chunk_local(pos);
         info!("Pos: {}, camera chunk: {}, pos in chunk: {}", pos, camera_chunk, pos_in_chunk);
     }
@@ -514,7 +600,7 @@ fn temp_set_block(
     if kb_input.just_pressed(KeyCode::KeyC) {
         // chunk coord of camera
         let camera_chunk = chunk::transform_to_chunk_pos(&camera);
-        let pos = camera.translation.as_ivec3();
+        let pos = camera.translation.as_block_pos();
 
         let pos_in_chunk = chunk::pos_to_chunk_local(pos);
         if let Some(entity) = chunk_cache.get_chunk(camera_chunk) {
@@ -553,8 +639,8 @@ fn track_chunks_around_player(
 ) {
     let (game_world, mut chunk_queue, mut chunk_cache) = world.into_inner();
     for e in event.read() {
-        let old_chunk = chunk::pos_to_chunk_pos(e.old.as_ivec3());
-        let new_chunk = chunk::pos_to_chunk_pos(e.new.as_ivec3());
+        let old_chunk = chunk::pos_to_chunk_pos(e.old.floor().as_ivec3());
+        let new_chunk = chunk::pos_to_chunk_pos(e.new.floor().as_ivec3());
         if old_chunk == new_chunk {
             continue;
         }
@@ -726,7 +812,12 @@ pub fn make_box(block_reg: &Registry<Block>) -> ChunkData {
         for y in 0..32 {
             for z in 0..32 {
                 let id = if 12 <= x && x <= 19 && 12 <= y && y <= 19 {
-                    rng.sample(Uniform::new(1, palette.len()).unwrap())
+                    if z % 2 == 0 {
+                        2
+                    }
+                    else {
+                        0
+                    }
                 }
                 else {
                     0
