@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::time::Duration;
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
-use crate::math::Vec3Ext;
+use crate::math::block::Vec3Ext;
 use crate::world::camera::MainCamera;
 use crate::world::{chunk, CursorTemp};
 use crate::world::block::BlockState;

@@ -6,7 +6,7 @@ use bevy::prelude::*;
 use crate::{asset, registry};
 use crate::asset::block::{BlockAsset};
 use crate::core::errors::RegistryError;
-use crate::core::event::PlayerMovedEvent;
+use crate::core::event::{PlayerMovedEvent, SetBlockEvent};
 use crate::core::state::{LoadingState, MainGameState};
 use crate::registry::block::{Block};
 use crate::registry::{RegistryHandle, Registry};
@@ -26,6 +26,7 @@ impl Plugin for CoreGamePlugin {
             .init_state::<MainGameState>()
             .init_state::<LoadingState>()
             .add_event::<PlayerMovedEvent>()
+            .add_event::<SetBlockEvent>()
             
             
             

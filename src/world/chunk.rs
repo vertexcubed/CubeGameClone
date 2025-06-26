@@ -1,83 +1,129 @@
-use std::collections::HashMap;
-use bitvec::prelude::Lsb0;
 use crate::core::errors::ChunkError;
-use crate::render::material::BlockMaterial;
-use crate::render::block::MeshDataCache;
-use crate::world::block::{BlockState, Direction};
-use bevy::asset::RenderAssetUsages;
-use bevy::math::{ivec3, vec3, Vec3};
-use bevy::prelude::{info_span, Component, IVec3, Mesh, Transform};
-use bevy::render::mesh::{Indices, PrimitiveTopology};
-use bitvec::{bits, bitvec};
-use bitvec::field::BitField;
+use crate::world::block::BlockState;
+use bevy::math::ivec3;
+use bevy::prelude::{Component, Entity, IVec3, Transform};
+use bitvec::bitvec;
 use bitvec::order::Msb0;
 use bitvec::prelude::BitVec;
 use bitvec::view::BitViewSized;
 use std::sync::{Arc, RwLock};
-use std::time::Instant;
-use crate::math::Vec3Ext;
-use crate::render::block::BlockModelMinimal;
+use crate::math::block::Vec3Ext;
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct PaletteEntry {
-    // 32768 possible blocks
-    ref_count: u16,
-    pub block: BlockState,
+
+
+/// A data structure that represents a chunk in the world. Stores some information about it tied to
+/// its physical state, like the blocks in the chunk and its state.
+#[derive(Debug, Clone)]
+pub struct Chunk {
+    // the position of this chunk in the world. Should always be the same.
+    pos: IVec3,
+    // data may be read by multiple threads, but only modified by one thread.
+    // Structure somewhat mirrors how chunks are stored to disk
+    // Note: this may not be available! Especially if the chunk is not generated yet.
+    // TODO: remove Arc here, as it's redundant (clone the ChunkMap instead)
+    data: Option<Arc<RwLock<ChunkData>>>,
+    // The entity ID of the corresponding entity.
+    // The entity stores all mesh information and rendering data and other in world data
+    chunk_entity: Entity,
+    generation_status: ChunkGenerationStatus,
 }
 
-impl PaletteEntry {
-    pub fn new(state: BlockState) -> Self {
-        PaletteEntry {
-            block: state,
-            ref_count: 0,
-        }
-    }
-
-    pub fn is_free(&self) -> bool {
-        self.ref_count == 0
-    }
-
-    pub fn increment_ref_count(&mut self) {
-        self.ref_count += 1;
-    }
-    pub fn decrement_ref_count(&mut self) {
-        if self.ref_count == 0 {
-            panic!("Palette is already free, cannot decrement refcount!");
-        }
-        self.ref_count -= 1;
-    }
-}
-
-#[derive(Debug, Clone, Component)]
-pub struct ChunkComponent {
-    // data may be read by multiple threads, but only modified by one thread
-    data: Arc<RwLock<ChunkData>>,
-    pub pos: IVec3,
-}
-impl ChunkComponent {
-    pub fn new(pos: IVec3, data: ChunkData) -> Self {
+impl Chunk {
+    pub fn new(pos: IVec3, chunk_entity: Entity) -> Self {
         Self {
-            data: Arc::new(RwLock::new(data)),
             pos,
+            data: None,
+            chunk_entity,
+            generation_status: ChunkGenerationStatus::NotGenerated
         }
     }
-    pub fn borrow_data(&self) -> Arc<RwLock<ChunkData>> {
-        self.data.clone()
+    
+    /// borrows the inner ChunkData. Mostly used for meshing on other threads, or for bulk read/writes / specific operations on the data.
+    /// Unlike the main getter/setter method, you CAN read and write while a chunk is not fully generated, however this method still returns
+    /// an error if the chunk data is None.
+    pub fn borrow_data(&self) -> Result<Arc<RwLock<ChunkData>>, ChunkError> {
+        if !self.data.is_none() {
+            return Err(ChunkError::Uninitialized(self.pos));
+        }
+        Ok(self.data.as_ref().unwrap().clone())
     }
 
     pub fn set_block(&mut self, pos: IVec3, state: BlockState) -> Result<BlockState, ChunkError> {
-        let mut write = self.data.write().unwrap();
+        if !self.is_initialized() {
+            return Err(ChunkError::Uninitialized(self.pos));
+        }
+        let mut write = self.data.as_ref().unwrap().write().unwrap();
         write.set_block(pos.x as usize, pos.y as usize, pos.z as usize, state)
     }
 
-    pub fn get_block(&self, pos: IVec3) -> BlockState {
-        let read = self.data.read().unwrap();
+    pub fn get_block(&self, pos: IVec3) -> Result<BlockState, ChunkError> {
+        if !self.is_initialized() {
+            return Err(ChunkError::Uninitialized(self.pos));
+        }
+        let read = self.data.as_ref().unwrap().read().unwrap();
         read.get_block(pos.x as usize, pos.y as usize, pos.z as usize)
     }
+
+    pub fn get_pos(&self) -> IVec3 {
+        self.pos
+    }
+    
+    pub fn get_generation_status(&self) -> ChunkGenerationStatus {
+        self.generation_status
+    }
+
+    pub fn is_initialized(&self) -> bool {
+        self.data.is_some() && match self.generation_status {
+            ChunkGenerationStatus::Generated => true,
+            _ => false
+        }
+    }
+    
+    pub fn get_entity(&self) -> Entity {
+        self.chunk_entity
+    }
+    
+    pub fn init_data(&mut self, data: ChunkData) -> Result<(), ChunkError> {
+        if self.data.is_some() {
+            return Err(ChunkError::AlreadyInitialized(self.pos));
+        }
+        self.data = Some(Arc::new(RwLock::new(data)));
+        
+        //TODO: switch to AfterTerrain when implemented decorators
+        self.generation_status = ChunkGenerationStatus::Generated;
+        
+        Ok(())
+    }
 }
+
 #[derive(Default, Debug, Component)]
 pub struct ChunkNeedsMeshing;
 
+
+/// Marker component for chunk entities in the world. Contains the pos.
+/// Chunks are separate entities while the World stores the chunk data, allowing easy lookups inside and outside of systems.
+#[derive(Debug, Component)]
+pub struct ChunkMarker {
+    pos: IVec3
+}
+impl ChunkMarker {
+    pub fn new(pos: IVec3) -> Self {
+        Self { pos }
+    }
+    pub fn get_pos(&self) -> IVec3 {
+        self.pos
+    }
+}
+
+
+#[derive(Debug, Copy, Clone)]
+pub enum ChunkGenerationStatus {
+    NotGenerated,
+    AfterTerrain,
+    // todo: maybe remove
+    AfterDecorations,
+    Generated
+}
 
 
 // Representation of chunks in memory
@@ -96,6 +142,10 @@ pub struct ChunkData {
     // if this is some: chunk is just one block. Can be air.
     is_single: bool,
 }
+
+
+
+
 impl ChunkData {
 
 
@@ -104,7 +154,7 @@ impl ChunkData {
     pub const BLOCKS_PER_CHUNK: usize = Self::CHUNK_SIZE.pow(3);
 
     // generally do not create this yourself
-    pub fn new(data: BitVec, palette: Vec<PaletteEntry>) -> Self {
+    pub fn with_data(data: BitVec, palette: Vec<PaletteEntry>) -> Self {
 
         // calcualtes the closest power of two id size for the palette.
         let id_size = ((palette.len()) as f32).log2().ceil() as usize;
@@ -129,7 +179,7 @@ impl ChunkData {
             id_size: 1,
             data: BitVec::new(),
             palette,
-            is_single: true
+            is_single: true,
         }
     }
     
@@ -140,7 +190,7 @@ impl ChunkData {
     pub fn is_empty(&self) -> bool {
         self.is_single && self.palette[0].block.is_air()
     }
-    
+
     // there are 32768 blocks in a chunk, so 32768 possible states. Could be stored in a u16 but eh.
     pub fn block_at(&self, x: usize, y: usize, z: usize) -> usize {
         let max = Self::CHUNK_SIZE;
@@ -199,17 +249,19 @@ impl ChunkData {
         self.palette.len() - 1
     }
 
-    pub fn get_block(&self, x: usize, y: usize, z: usize) -> BlockState {
+    pub fn get_block(&self, x: usize, y: usize, z: usize) -> Result<BlockState, ChunkError> {
+        if x >= ChunkData::CHUNK_SIZE || y >= ChunkData::CHUNK_SIZE || z >= ChunkData::CHUNK_SIZE {
+            return Err(ChunkError::OutOfBounds(ivec3(x as i32, y as i32, z as i32)));
+        }
         let id = self.block_at(x, y, z);
-        self.palette[id].block.clone()
+        Ok(self.palette[id].block.clone())
     }
 
 
 
     pub fn set_block(&mut self, x: usize, y: usize, z: usize, block: BlockState) -> Result<BlockState, ChunkError> {
         if x >= Self::CHUNK_SIZE || y >= Self::CHUNK_SIZE || z >= Self::CHUNK_SIZE {
-            let message = format!("Index {x}, {y}, {z} is out of bounds.");
-            return Err(ChunkError::new(message.as_str()));
+            return Err(ChunkError::OutOfBounds(ivec3(x as i32, y as i32, z as i32)));
         }
         
 
@@ -327,6 +379,35 @@ impl ChunkData {
         None
     }
 }
+#[derive(Debug, Clone, PartialEq)]
+pub struct PaletteEntry {
+    // 32768 possible blocks
+    ref_count: u16,
+    pub block: BlockState,
+}
+
+impl PaletteEntry {
+    pub fn new(state: BlockState) -> Self {
+        PaletteEntry {
+            block: state,
+            ref_count: 0,
+        }
+    }
+
+    pub fn is_free(&self) -> bool {
+        self.ref_count == 0
+    }
+
+    pub fn increment_ref_count(&mut self) {
+        self.ref_count += 1;
+    }
+    pub fn decrement_ref_count(&mut self) {
+        if self.ref_count == 0 {
+            panic!("Palette is already free, cannot decrement refcount!");
+        }
+        self.ref_count -= 1;
+    }
+}
 
 fn block_at_raw(data: &BitVec, id_size: usize, scaled_index: usize) -> usize {
     let value = &data[scaled_index..scaled_index + id_size];
@@ -349,14 +430,6 @@ fn set_raw(data: &mut BitVec, id_size: usize, scaled_index: usize, value: usize)
     for i in 0..id_size {
         data.set(scaled_index + i, slice[i]);
     }
-}
-
-fn index_to_xyz(i: usize) -> (usize, usize, usize) {
-    (
-        (i / ChunkData::CHUNK_SIZE) % ChunkData::CHUNK_SIZE,
-        i / (ChunkData::CHUNK_SIZE * ChunkData::CHUNK_SIZE),
-        i % ChunkData::CHUNK_SIZE
-    )
 }
 
 fn xyz_to_index(x: usize, y: usize, z: usize) -> usize {
@@ -382,247 +455,5 @@ pub fn pos_to_chunk_local(pos: IVec3) -> IVec3 {
     pos - (ChunkData::CHUNK_SIZE as i32 * pos_to_chunk_pos(pos))
 }
 
-//===============
-// - mesh stuff -
-//===============
-
-
-
-#[derive(Debug, Copy, Clone, PartialEq)]
-enum Facing {
-    North, // +z
-    South, // -z
-    East, // +x
-    West, // -x
-    Up, // +y
-    Down, // -y
-}
-
-impl From<Direction> for Facing {
-    fn from(value: Direction) -> Self {
-        match value {
-            Direction::Up => Facing::Up,
-            Direction::Down => Facing::Down,
-            Direction::North => Facing::North,
-            Direction::South => Facing::South,
-            Direction::East => Facing::East,
-            Direction::West => Facing::West,
-        }
-    }
-}
-
-
-pub type NeighborData<'a> = (&'a ChunkData, &'a ChunkData, &'a ChunkData, &'a ChunkData,&'a ChunkData, &'a ChunkData);
-
-pub fn create_chunk_mesh(
-    chunk: &ChunkData,
-    cache: &MeshDataCache,
-    neighbors: Option<NeighborData>
-) -> Mesh {
-
-    let span = info_span!("create_chunk_mesh").entered();
-
-    let model_map = cache.inner.load();
-    
-    let mut positions = Vec::<[f32; 3]>::new();
-    let mut uv0s = Vec::<[f32; 2]>::new();
-    let mut normals = Vec::<[f32; 3]>::new();
-    let mut indices = Vec::<u32>::new();
-    let mut texture_ids = Vec::<u32>::new();
-    
-
-    //TODO: optimize in the case of single chunks (chunks made up of just one block)
-    
-    let mut indices_offset = 0;
-    
-    for i in 0..ChunkData::BLOCKS_PER_CHUNK {
-
-        let id = chunk.block_at_index(i);
-        
-        let block_id = chunk.lookup_palette(id).unwrap();
-        if block_id.block.is_air() {
-            continue;
-        }
-        let block_model = model_map.get(&block_id.block).unwrap();
-
-        let (x, y, z) = index_to_xyz(i);
-
-        // iter over each face
-        for face in block_model.face_iter() {
-            if let Some(dir) = face.get_cull_mode() {
-                // cull face - block adjacent is solid
-                if !should_make_face(dir.into(), &chunk, x, y, z, neighbors, &model_map) {
-                    continue;
-                }
-            }
-            // else make a new face
-            let (
-                mut face_pos, 
-                mut face_uv0, 
-                mut face_normal, 
-                mut face_index, 
-                mut face_texture_ids
-            ) = face.get_face_data(vec3(x as f32, y as f32, z as f32), indices_offset);
-
-            indices_offset += face_pos.len() as u32;
-
-            positions.append(&mut face_pos);
-            uv0s.append(&mut face_uv0);
-            normals.append(&mut face_normal);
-            indices.append(&mut face_index);
-            texture_ids.append(&mut face_texture_ids);
-
-        }
-    }
-    
-    // creates the chunk mesh
-    let ret = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
-        .with_inserted_attribute(BlockMaterial::ATTRIBUTE_ARRAY_ID, texture_ids)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uv0s)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
-        .with_inserted_indices(Indices::U32(indices));
-    
-    ret
-}
-
-
-type FaceData = ([[f32; 3]; 4], [[f32; 2]; 4], [[f32; 3]; 4], [u32; 6]);
-
-// outputs vertex specific data for this block and face
-fn face_data(facing: Facing) -> FaceData {
-    match facing {
-        Facing::North => (
-            [ [0., 0., 1.], [0., 1., 1.], [1., 1., 1.], [1., 0., 1.], ],
-            [ [0.0, 1.0], [0.0, 0.0], [1.0, 0.0], [1.0, 1.0], ],
-            [ [0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0], ],
-            [ 0,3,1, 1,3,2, ],
-        ),
-        Facing::South => (
-            [ [0., 0., 0.], [0., 1., 0.], [1., 1., 0.], [1., 0., 0.], ],
-            [ [0.0, 1.0], [0.0, 0.0], [1.0, 0.0], [1.0, 1.0], ],
-            [ [0.0, 0.0, -1.0], [0.0, 0.0, -1.0], [0.0, 0.0, -1.0], [0.0, 0.0, -1.0], ],
-            [ 0,1,3, 1,2,3, ],
-        ),
-        Facing::East => (
-            [ [1., 0., 0.], [1., 0., 1.], [1., 1., 1.], [1., 1., 0.], ],
-            [ [1.0, 1.0], [0.0, 1.0], [0.0, 0.0], [1.0, 0.0], ],
-            [ [1.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 0.0, 0.0], ],
-            [ 0,3,1, 1,3,2, ],
-        ),
-        Facing::West => (
-            [ [0., 0., 0.], [0., 0., 1.], [0., 1., 1.], [0., 1., 0.], ],
-            [ [1.0, 1.0], [0.0, 1.0], [0.0, 0.0], [1.0, 0.0], ],
-            [ [-1.0, 0.0, 0.0], [-1.0, 0.0, 0.0], [-1.0, 0.0, 0.0], [-1.0, 0.0, 0.0], ],
-            [ 0,1,3, 1,2,3 ],
-        ),
-        Facing::Up => (
-            [ [0., 1., 0.], [1., 1., 0.], [1., 1., 1.], [0., 1., 1.], ],
-            [ [0.0, 1.0], [0.0, 0.0], [1.0, 0.0], [1.0, 1.0] ],
-            [ [0.0, 1.0, 0.0], [0.0, 1.0, 0.0], [0.0, 1.0, 0.0], [0.0, 1.0, 0.0], ],
-            [ 0,3,1, 1,3,2 ],
-        ),
-        Facing::Down => (
-            [ [0., 0., 0.], [1., 0., 0.], [1., 0., 1.], [0., 0., 1.], ],
-            [ [0.0, 1.0], [0.0, 0.0], [1.0, 0.0], [1.0, 1.0], ],
-            [ [0.0, -1.0, 0.0], [0.0, -1.0, 0.0], [0.0, -1.0, 0.0], [0.0, -1.0, 0.0], ],
-            [ 0,1,3, 1,2,3 ]
-        ),
-    }
-}
-
-fn should_make_face(
-    facing: Facing, 
-    chunk: &ChunkData, 
-    x: usize, y: usize, z: usize, 
-    neighbors: Option<NeighborData>,
-    model_map: &HashMap<BlockState, BlockModelMinimal>
-) -> bool {
-
-    let last = ChunkData::CHUNK_SIZE - 1;
-    
-    if neighbors.is_none() {
-        match facing {
-            Facing::North => {
-                if(z == last) { return true; };
-            }
-            Facing::South => {
-                if(z == 0) { return true; };
-            }
-            Facing::East => {
-                if(x == last) { return true; };
-            }
-            Facing::West => {
-                if(x == 0) { return true; };
-            }
-            Facing::Up => {
-                if(y == last) { return true; };
-            }
-            Facing::Down => {
-                if(y == 0) { return true; };
-            }
-        };
-    };
-
-    // get the value at new_pos
-    let (new_x, new_y, new_z) = new_block(facing, x as isize, y as isize, z as isize);
-    // Check west data.
-    let (block, queried_chunk) = if neighbors.is_some() {
-        let (north, south, east, west, up, down) = neighbors.unwrap();
-
-        if new_z < 0 {
-            (south.block_at(new_x as usize, new_y as usize, last), south)
-        }
-        else if new_z > last as isize {
-            (north.block_at(new_x as usize, new_y as usize, 0), north)
-        }
-        else if new_x < 0 {
-            (west.block_at(last, new_y as usize, new_z as usize), west)
-        }
-        else if new_x > last as isize {
-            (east.block_at(0, new_y as usize, new_z as usize), east)
-        }
-        else if new_y < 0 {
-            (down.block_at(new_x as usize, last, new_z as usize), down)
-        }
-        else if new_y > last as isize {
-            (up.block_at(new_x as usize, 0, new_z as usize), up)
-        }
-        else {
-            (chunk.block_at(new_x as usize, new_y as usize, new_z as usize), chunk)
-        }
-    }
-    else {
-        (chunk.block_at(new_x as usize, new_y as usize, new_z as usize), chunk)
-    };
-    
-    let queried_side = match facing {
-        Facing::North => Direction::South,
-        Facing::South => Direction::North,
-        Facing::East => Direction::West,
-        Facing::West => Direction::East,
-        Facing::Up => Direction::Down,
-        Facing::Down => Direction::Up,
-    };
-    
-    let state = &queried_chunk.lookup_palette(block).unwrap().block;
-    let model = model_map.get(&state);
-    // no model? treat like air
-    if model.is_none() {
-        return true;
-    }
-    
-    !model.unwrap().is_full(queried_side)
-}
-
-// no guarantee these are in bounds
-fn new_block(facing: Facing, x: isize, y: isize, z: isize) -> (isize, isize, isize) {
-    match facing {
-        Facing::North => (x, y, z + 1),
-        Facing::South => (x, y, z - 1),
-        Facing::East =>  (x + 1, y, z),
-        Facing::West =>  (x - 1, y, z),
-        Facing::Up =>    (x, y + 1, z),
-        Facing::Down =>  (x, y - 1, z),
-    }
-}
+#[derive(Component)]
+pub struct ChunkMeshMarker;

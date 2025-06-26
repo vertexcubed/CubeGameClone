@@ -1,12 +1,12 @@
 use bevy::math::vec3;
 use bevy::prelude::{IVec3, Vec3};
-use crate::math::Vec3Ext;
+use crate::math::block::Vec3Ext;
 
 pub fn block_raycast(
     start: Vec3,
     direction: Vec3,
     max_distance: f32,
-    mut test_function: impl FnMut(IVec3) -> bool,
+    mut test_function: impl FnMut(&RayContext, Vec3, IVec3) -> bool,
 ) -> Result<RayResult, Box<dyn std::error::Error>> {
 
 
@@ -29,6 +29,12 @@ pub fn block_raycast(
 
     // following distances are based on the formula p + t * d, where p is the origin, d is the dir vector, and t is the amount
 
+    let context = RayContext {
+        start,
+        direction,
+    };
+    
+    
     // the step vectors. the signs tell you which way to step
     let step = direction.signum();
 
@@ -50,7 +56,7 @@ pub fn block_raycast(
     while traveled_distance < max_distance {
         let axis = argmin(max_t);
         grid_pos[axis] += step[axis];
-        if test_function(grid_pos.as_block_pos()) {
+        if test_function(&context, start + (max_t[axis] * direction), grid_pos.as_block_pos()) {
             return Ok(RayResult::Hit(start + (max_t[axis] * direction), grid_pos.as_block_pos()))
         }
         traveled_distance = max_t[axis];
@@ -96,4 +102,11 @@ fn grid_initial(origin: Vec3, step_vec: Vec3) -> Vec3 {
 pub enum RayResult {
     Hit(Vec3, IVec3),
     Miss
+}
+
+
+#[derive(Debug, Clone)]
+pub struct RayContext {
+    start: Vec3,
+    direction: Vec3,
 }

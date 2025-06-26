@@ -22,8 +22,8 @@ use crate::world::block::BlockState;
 
 pub mod material;
 pub mod pipeline;
-mod chunk_mesh;
 pub mod block;
+pub mod chunk;
 
 #[derive(Default)]
 pub struct GameRenderPlugin;
