@@ -15,6 +15,7 @@ pub mod state;
 pub mod errors;
 pub mod event;
 
+/// Core plugin that registers states, events, core systems, etc.
 #[derive(Default)]
 pub struct CoreGamePlugin;
 
@@ -26,7 +27,6 @@ impl Plugin for CoreGamePlugin {
             .init_state::<MainGameState>()
             .init_state::<LoadingState>()
             .add_event::<PlayerMovedEvent>()
-            .add_event::<SetBlockEvent>()
             
             
             
@@ -34,9 +34,7 @@ impl Plugin for CoreGamePlugin {
             .add_systems(Update, (all_folders_loaded, check_loading_blocks)
                 .run_if(in_state(LoadingState::Assets))
             )
-            .add_systems(OnEnter(LoadingState::Registries), create_block_registry)
-            .add_systems(OnExit(LoadingState::Registries), freeze_registries)
-
+            
             .add_systems(OnEnter(LoadingState::Done), finish_loading)
         ;
     }
@@ -127,31 +125,7 @@ fn all_folders_loaded(
 }
 
 
-fn create_block_registry(
-    mut block_reg: ResMut<Registry<Block>>,
-    all_block_handles: Res<AllBlockAssets>,
-    block_asset: Res<Assets<BlockAsset>>,
-    mut next_load_state: ResMut<NextState<LoadingState>>,
-) -> Result<(), BevyError> {
-    for h in all_block_handles.inner.iter() {
-        let block = Block::from_asset(block_asset.get(h).unwrap());
-        block_reg.register(block)?;
-    }
-    next_load_state.set(LoadingState::Textures);
 
-    Ok(())
-}
-
-
-// freezes registries, moving them to ReadOnlyRegistry resources which are backed by an arc
-fn freeze_registries(
-    world: &mut World
-) {
-    // old writeable registry is removed from the world, and replaced with a Read Only Registry that is backed by an arc.
-    let mut old_reg = world.remove_resource::<Registry<Block>>().unwrap();
-    old_reg.freeze();
-    world.insert_resource(RegistryHandle::new(old_reg));
-}
 
 
 

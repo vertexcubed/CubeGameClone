@@ -20,7 +20,7 @@ use rand::Rng;
 use source::ChunkMap;
 use crate::asset::block::BlockModelAsset;
 use crate::render::material::BlockMaterial;
-use crate::asset::procedural::BlockTextures;
+use crate::render::block::BlockTextures;
 use crate::core::errors::WorldError;
 use crate::core::event::{PlayerMovedEvent, SetBlockEvent};
 use crate::core::state::MainGameState;
@@ -50,11 +50,11 @@ impl Plugin for GameWorldPlugin {
             .init_resource::<CameraSettings>()
             // temp
 
-            .add_systems(Update, (handle_input, raycast))
+            .add_systems(Update, (handle_input, look_at_block))
             .add_systems(Update, (temp_create_chunk, temp_set_block).chain())
             // .add_systems(Update, track_chunks_around_player)
-            .add_systems(PostUpdate, on_set_block)
             .add_systems(OnEnter(MainGameState::InGame), (setup, grab_cursor, create_world))
+            .add_observer(on_set_block)
         ;
         source::add_systems(app);
     }
@@ -120,7 +120,7 @@ fn handle_input(
 }
 
 
-fn raycast(
+fn look_at_block(
     mut transform: Single<&mut Transform, (With<MainCamera>, Without<CursorTemp>)>,
     world: Single<&WorldSource>,
     kb_input: Res<ButtonInput<KeyCode>>,
@@ -145,7 +145,7 @@ fn raycast(
         // println!("Testing block {}", b_pos);
 
         let Ok(block) = world.get_block(&b_pos) else {
-            return false;
+            return Ok(false);
         };
         // println!("State: {:?}", block);
         let b = block.is_air();
@@ -158,7 +158,7 @@ fn raycast(
         // let voxel_center = b_pos.center();
         // gizmos.cuboid(Transform::from_translation(voxel_center).with_scale(Vec3::splat(1.0)), color);
 
-        !b
+        Ok(!b)
     });
     // println!("Result: {:?}", result);
     if let Ok(RayResult::Hit(pos, b_pos)) = result {
@@ -245,6 +245,8 @@ impl Default for GameWorld {
 fn create_world(
     mut commands: Commands,
 ) {
+
+
     commands.spawn((
         GameWorld::default(),
         WorldSource::new()
@@ -253,26 +255,20 @@ fn create_world(
 
 
 fn on_set_block(
+    trigger: Trigger<SetBlockEvent>,
     mut commands: Commands,
     world: Single<&WorldSource>,
-    mut event: EventReader<SetBlockEvent>,
 ) {
-    if event.is_empty() {
-        return;
-    }
-    
+
     let map = world.get_chunk_map();
     let read_guard = map.read_guard();
-    
-    
-    for e in event.read() {
-        
-        let pos = e.pos;
-        let chunk_pos = chunk::pos_to_chunk_pos(pos);
-        let chunk = ChunkMap::get_chunk(&chunk_pos, &read_guard).unwrap();
-        let entity = chunk.get_entity();
-        commands.entity(entity).insert(ChunkNeedsMeshing);
-    }
+
+    info!("Block set event");
+    let pos = trigger.pos;
+    let chunk_pos = chunk::pos_to_chunk_pos(pos);
+    let chunk = ChunkMap::get_chunk(&chunk_pos, &read_guard).unwrap();
+    let entity = chunk.get_entity();
+    commands.entity(entity).insert(ChunkNeedsMeshing);
 }
 
 
@@ -292,7 +288,7 @@ fn temp_create_chunk(
     if kb_input.just_pressed(KeyCode::KeyX) {
         let mut map = world.get_chunk_map_mut();
         let read_guard = map.read_guard();
-        
+
         info!("Loading chunks...");
         let mut i = 0;
         for x in -rad..rad + 1 {
@@ -302,16 +298,16 @@ fn temp_create_chunk(
                     if ChunkMap::get_chunk(&coord, &read_guard).is_some() {
                         continue;
                     }
-                    
+
                     queue.push_back(coord);
-                    
+
                     i += 1;
                 }
             }
         }
         info!("Created {i} chunk tasks.");
     }
-    
+
     while !queue.is_empty() {
         world.queue_chunk_generation(queue.pop_front().unwrap());
     }

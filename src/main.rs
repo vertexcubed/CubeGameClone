@@ -4,6 +4,8 @@ mod registry;
 mod world;
 mod render;
 mod ui;
+
+#[allow(dead_code)]
 mod math;
 
 use crate::registry::RegistryPlugin;

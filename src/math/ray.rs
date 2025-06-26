@@ -2,11 +2,18 @@ use bevy::math::vec3;
 use bevy::prelude::{IVec3, Vec3};
 use crate::math::block::Vec3Ext;
 
+
+
+
+
+/// Performs a raycast from a starting position to a direction in the world.
+/// The test function is run every block iteration, returning true on a ray hit and false on a ray miss.
+/// If the test function returns an error, the raycast is abrupted immediately and the error is returned.
 pub fn block_raycast(
     start: Vec3,
     direction: Vec3,
     max_distance: f32,
-    mut test_function: impl FnMut(&RayContext, Vec3, IVec3) -> bool,
+    mut test_function: impl FnMut(&RayContext, Vec3, IVec3) -> Result<bool, Box<dyn std::error::Error>>,
 ) -> Result<RayResult, Box<dyn std::error::Error>> {
 
 
@@ -56,7 +63,9 @@ pub fn block_raycast(
     while traveled_distance < max_distance {
         let axis = argmin(max_t);
         grid_pos[axis] += step[axis];
-        if test_function(&context, start + (max_t[axis] * direction), grid_pos.as_block_pos()) {
+        
+        let is_hit = test_function(&context, start + (max_t[axis] * direction), grid_pos.as_block_pos())?;
+        if is_hit {
             return Ok(RayResult::Hit(start + (max_t[axis] * direction), grid_pos.as_block_pos()))
         }
         traveled_distance = max_t[axis];
@@ -81,32 +90,18 @@ fn argmin(vec: Vec3) -> usize {
     index
 }
 
-fn grid_initial(origin: Vec3, step_vec: Vec3) -> Vec3 {
-    let mut ret = origin.floor();
-    if step_vec.x < 0.0 {
-        ret.x = origin.x.ceil();
-    }
-    if step_vec.y < 0.0 {
-        ret.y = origin.y.ceil();
-    }
-    if step_vec.z < 0.0 {
-        ret.z = origin.z.ceil();
-    }
-
-    ret
-    // origin.floor()
-}
-
-
+/// The result of a raycast. 
+/// Either a hit containing the Vec3 representing the point 
+/// on the block the ray intersected and block pos of the raycast, or a miss.
 #[derive(Debug, Clone)]
 pub enum RayResult {
     Hit(Vec3, IVec3),
     Miss
 }
 
-
+/// The context of a Raycast, for use in test functions.
 #[derive(Debug, Clone)]
 pub struct RayContext {
-    start: Vec3,
-    direction: Vec3,
+    pub start: Vec3,
+    pub direction: Vec3,
 }

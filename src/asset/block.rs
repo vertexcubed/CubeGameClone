@@ -171,7 +171,6 @@ impl AssetLoader for BlockModelLoader {
             reader.read_to_end(&mut bytes).await?;
             let mut model = ron::de::from_bytes::<BlockModelAsset>(&bytes)?;
 
-            println!("Model: {:?}", model);
             
             // get the model handle from the model path
             // let texture_str = format!("texture/{}.png", model.texture.clone());

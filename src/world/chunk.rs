@@ -1,7 +1,7 @@
 use crate::core::errors::ChunkError;
 use crate::world::block::BlockState;
 use bevy::math::ivec3;
-use bevy::prelude::{Component, Entity, IVec3, Transform};
+use bevy::prelude::{info, Component, Entity, IVec3, Transform};
 use bitvec::bitvec;
 use bitvec::order::Msb0;
 use bitvec::prelude::BitVec;
@@ -21,7 +21,7 @@ pub struct Chunk {
     // Structure somewhat mirrors how chunks are stored to disk
     // Note: this may not be available! Especially if the chunk is not generated yet.
     // TODO: remove Arc here, as it's redundant (clone the ChunkMap instead)
-    data: Option<Arc<RwLock<ChunkData>>>,
+    data: Option<ChunkData>,
     // The entity ID of the corresponding entity.
     // The entity stores all mesh information and rendering data and other in world data
     chunk_entity: Entity,
@@ -37,37 +37,37 @@ impl Chunk {
             generation_status: ChunkGenerationStatus::NotGenerated
         }
     }
-    
+
     /// borrows the inner ChunkData. Mostly used for meshing on other threads, or for bulk read/writes / specific operations on the data.
     /// Unlike the main getter/setter method, you CAN read and write while a chunk is not fully generated, however this method still returns
     /// an error if the chunk data is None.
-    pub fn borrow_data(&self) -> Result<Arc<RwLock<ChunkData>>, ChunkError> {
-        if !self.data.is_none() {
+    pub fn get_data(&self) -> Result<&ChunkData, ChunkError> {
+        if self.data.is_none() {
             return Err(ChunkError::Uninitialized(self.pos));
         }
-        Ok(self.data.as_ref().unwrap().clone())
+        Ok(self.data.as_ref().unwrap())
     }
 
     pub fn set_block(&mut self, pos: IVec3, state: BlockState) -> Result<BlockState, ChunkError> {
         if !self.is_initialized() {
             return Err(ChunkError::Uninitialized(self.pos));
         }
-        let mut write = self.data.as_ref().unwrap().write().unwrap();
-        write.set_block(pos.x as usize, pos.y as usize, pos.z as usize, state)
+        let data = self.data.as_mut().unwrap();
+        data.set_block(pos.x as usize, pos.y as usize, pos.z as usize, state)
     }
 
     pub fn get_block(&self, pos: IVec3) -> Result<BlockState, ChunkError> {
         if !self.is_initialized() {
             return Err(ChunkError::Uninitialized(self.pos));
         }
-        let read = self.data.as_ref().unwrap().read().unwrap();
-        read.get_block(pos.x as usize, pos.y as usize, pos.z as usize)
+        let data = self.data.as_ref().unwrap();
+        data.get_block(pos.x as usize, pos.y as usize, pos.z as usize)
     }
 
     pub fn get_pos(&self) -> IVec3 {
         self.pos
     }
-    
+
     pub fn get_generation_status(&self) -> ChunkGenerationStatus {
         self.generation_status
     }
@@ -78,20 +78,20 @@ impl Chunk {
             _ => false
         }
     }
-    
+
     pub fn get_entity(&self) -> Entity {
         self.chunk_entity
     }
-    
+
     pub fn init_data(&mut self, data: ChunkData) -> Result<(), ChunkError> {
         if self.data.is_some() {
             return Err(ChunkError::AlreadyInitialized(self.pos));
         }
-        self.data = Some(Arc::new(RwLock::new(data)));
-        
+        self.data = Some(data);
+
         //TODO: switch to AfterTerrain when implemented decorators
         self.generation_status = ChunkGenerationStatus::Generated;
-        
+
         Ok(())
     }
 }
@@ -182,11 +182,11 @@ impl ChunkData {
             is_single: true,
         }
     }
-    
+
     pub fn is_single(&self) -> bool {
         self.is_single
     }
-    
+
     pub fn is_empty(&self) -> bool {
         self.is_single && self.palette[0].block.is_air()
     }
@@ -216,7 +216,7 @@ impl ChunkData {
         if self.is_single {
             return self.palette.len();
         };
-        
+
         block_at_raw(&self.data, self.id_size, scaled_index)
     }
 
@@ -263,14 +263,14 @@ impl ChunkData {
         if x >= Self::CHUNK_SIZE || y >= Self::CHUNK_SIZE || z >= Self::CHUNK_SIZE {
             return Err(ChunkError::OutOfBounds(ivec3(x as i32, y as i32, z as i32)));
         }
-        
 
 
-        
+
+
         if self.is_single {
             // single block? not anymore!
             let has_to_expand = self.palette[0].block != block;
-            
+
             if !has_to_expand {
                 // no changes since we've set the block to the one block this chunk is entirely
                 println!("No changes, chunk is single");
@@ -283,8 +283,8 @@ impl ChunkData {
             self.data = bitvec![self.palette.len(); Self::BLOCKS_PER_CHUNK];
             self.palette[0].ref_count = Self::BLOCKS_PER_CHUNK as u16;
         }
-        
-        
+
+
         let old_block = self.block_at(x, y, z);
         let index = xyz_to_index(x, y, z);
 

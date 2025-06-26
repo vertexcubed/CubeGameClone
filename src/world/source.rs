@@ -1,16 +1,18 @@
 use std::collections::hash_map::Iter;
-use bevy::prelude::{error, App, Children, Commands, Component, Entity, EventWriter, Events, First, IVec3, IntoScheduleConfigs, Mesh, Mesh3d, PreUpdate, Query, Res, ResMut, Single, Visibility, With};
+use bevy::prelude::{error, info, App, Children, Commands, Component, Entity, EventWriter, Events, First, IVec3, IntoScheduleConfigs, Mesh, Mesh3d, PreUpdate, Query, QueryState, Res, ResMut, Single, Visibility, With};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use bevy::app::PostUpdate;
 use bevy::asset::Assets;
+use bevy::ecs::system::SystemState;
 use bevy::log::info_span;
 use bevy::math::{ivec3, Vec3};
 use bevy::pbr::MeshMaterial3d;
 use bevy::render::primitives::Aabb;
 use bevy::tasks::{block_on, AsyncComputeTaskPool, Task};
 use bevy::tasks::futures_lite::future;
-use crate::asset::procedural::BlockTextures;
+use crate::render::block::BlockTextures;
 use crate::core::errors::{ChunkError, WorldError};
 use crate::core::errors::ChunkError::DuplicateChunk;
 use crate::core::event::SetBlockEvent;
@@ -34,18 +36,16 @@ pub struct WorldSource {
     events: WorldEvents
 }
 
+
+// TODO: migrate to Observers instead
 pub struct WorldEvents {
-    set_block_event: Events<SetBlockEvent>
+    set_block_event: VecDeque<SetBlockEvent>,
 }
 impl WorldEvents {
     pub fn new() -> Self {
         Self {
-            set_block_event: Events::<SetBlockEvent>::default()
+            set_block_event: VecDeque::new()
         }
-    }
-    
-    pub fn update(&mut self) {
-        self.set_block_event.update();
     }
 }
 
@@ -97,13 +97,13 @@ impl WorldSource {
             return Err(WorldError::UnloadedChunk(chunk_pos));
         };
         let res = chunk.set_block(chunk_local, block.clone())?;
-        
-        self.events.set_block_event.send(SetBlockEvent {
+
+        self.events.set_block_event.push_back(SetBlockEvent {
             pos: pos,
             old: res.clone(),
             new: block,
         });
-        
+
         Ok(res)
 
     }
@@ -199,16 +199,23 @@ impl ChunkMap {
 // ===================================
 pub fn add_systems(app: &mut App) {
     app
-        .add_systems(First, update_world_events)
+        .add_systems(PostUpdate, trigger_world_observers)
         .add_systems(PreUpdate, (process_generate_queue, receive_generated_chunks, insert_chunk_data, queue_mesh_creation).chain())
         .add_systems(PreUpdate, (receive_generated_meshes, upload_meshes))
     ;
 }
 
-fn update_world_events(
+/// Triggers all world triggers that were queued up during the Update loop.
+fn trigger_world_observers(
+    mut commands: Commands,
     mut world: Single<&mut WorldSource>
 ) {
-    world.events.update();
+    let events = &mut world.events;
+
+    while !(events.set_block_event.is_empty()) {
+        let e = events.set_block_event.pop_front().unwrap();
+        commands.trigger(e);
+    }
 }
 
 fn process_generate_queue(
@@ -219,7 +226,7 @@ fn process_generate_queue(
     let world = world.as_mut();
     let (map, chunk_queue) = (&mut world.map, &mut world.chunk_queue);
 
-    if chunk_queue.finished_generating.is_empty() {
+    if chunk_queue.to_generate.is_empty() {
         return;
     }
 
@@ -228,9 +235,13 @@ fn process_generate_queue(
     while !chunk_queue.to_generate.is_empty() {
         let pos = chunk_queue.to_generate.pop_front().unwrap();
 
+
+        // info!("Generating chunk {pos}");
+
         // Create chunk entity
         let chunk_entity = commands.spawn((
             ChunkMarker::new(pos),
+            chunk::chunk_pos_to_transform(pos),
             Visibility::Visible,
             )).id();
 
@@ -300,6 +311,9 @@ fn insert_chunk_data(
     while !chunk_queue.finished_generating.is_empty() {
         let (pos, data) = chunk_queue.finished_generating.pop_front().unwrap();
 
+        // info!("Finished generating chunk {pos}, inserting...");
+
+
         let Some(chunk) = ChunkMap::get_chunk_mut(&pos, &mut write_guard) else {
             error!("Chunk {pos} doesn't exist!");
             continue;
@@ -329,8 +343,12 @@ fn queue_mesh_creation(
 
     let read_guard = map.read_guard();
 
-    for (entity, marker) in chunks_to_mesh.iter() {
+    let iter = chunks_to_mesh.iter();
+
+    for (entity, marker) in iter {
         let pos = marker.get_pos();
+
+        // info!("Meshing chunk {pos}...");
 
         let chunk = ChunkMap::get_chunk(&pos, &read_guard).unwrap();
 
@@ -342,27 +360,35 @@ fn queue_mesh_creation(
         let down = ChunkMap::get_chunk(&(pos + ivec3(0, -1, 0)), &read_guard);
         if let (Some(north), Some(south), Some(east), Some(west), Some(up), Some(down)) = (north, south, east, west, up, down) {
 
-
-            commands.entity(entity).remove::<ChunkNeedsMeshing>();
-
+            // moved into thread
             let cache = mesh_cache.clone();
-            let Ok(chunk_arc) = chunk.borrow_data() else { continue; };
-            let Ok(north_arc) = north.borrow_data() else { continue; };
-            let Ok(south_arc) = south.borrow_data() else { continue; };
-            let Ok(east_arc) = east.borrow_data() else { continue; };
-            let Ok(west_arc) = west.borrow_data() else { continue; };
-            let Ok(up_arc) = up.borrow_data() else { continue; };
-            let Ok(down_arc) = down.borrow_data() else { continue; };
+            let chunk_map = map.clone();
+            if !(
+                chunk.is_initialized() &&
+                north.is_initialized() &&
+                south.is_initialized() &&
+                east.is_initialized() &&
+                west.is_initialized() &&
+                up.is_initialized() &&
+                down.is_initialized()
+            ) {
+                continue;
+            }
 
             let task = AsyncComputeTaskPool::get().spawn(async move {
                 // read the data
-                let data = chunk_arc.read().unwrap();
-                let north_data = north_arc.read().unwrap();
-                let south_data = south_arc.read().unwrap();
-                let east_data = east_arc.read().unwrap();
-                let west_data = west_arc.read().unwrap();
-                let up_data = up_arc.read().unwrap();
-                let down_data = down_arc.read().unwrap();
+
+                let thread_read_guard = chunk_map.read_guard();
+
+
+
+                let data = ChunkMap::get_chunk(&pos, &thread_read_guard).unwrap().get_data().unwrap();
+                let north_data = ChunkMap::get_chunk(&(pos + ivec3(0, 0, 1)), &thread_read_guard).unwrap().get_data().unwrap();
+                let south_data = ChunkMap::get_chunk(&(pos + ivec3(0, 0, -1)), &thread_read_guard).unwrap().get_data().unwrap();
+                let east_data = ChunkMap::get_chunk(&(pos + ivec3(1, 0, 0)), &thread_read_guard).unwrap().get_data().unwrap();
+                let west_data = ChunkMap::get_chunk(&(pos + ivec3(-1, 0, 0)), &thread_read_guard).unwrap().get_data().unwrap();
+                let up_data = ChunkMap::get_chunk(&(pos + ivec3(0, 1, 0)), &thread_read_guard).unwrap().get_data().unwrap();
+                let down_data = ChunkMap::get_chunk(&(pos + ivec3(0, -1, 0)), &thread_read_guard).unwrap().get_data().unwrap();
                 let neighbors: render::chunk::NeighborData = (
                     &north_data,
                     &south_data,
@@ -383,6 +409,8 @@ fn queue_mesh_creation(
 
             });
             chunk_queue.currently_meshing.insert(pos, task);
+
+            // info!("Submitted mesh job for {pos}");
             commands.entity(entity).remove::<ChunkNeedsMeshing>();
         }
 
@@ -454,6 +482,8 @@ fn upload_meshes(
 
         let (coord, mesh) = chunk_queue.finished_meshing.pop_front().unwrap();
 
+        // info!("Uploading mesh {coord}");
+
         // air - we don't need to make a mesh and can just move on
         if mesh.is_none() {
             continue;
@@ -498,6 +528,7 @@ fn upload_meshes(
                 Mesh3d(mesh_handle.clone()),
                 ChunkMeshMarker,
                 MeshMaterial3d(block_textures.material.clone()),
+                Aabb::from_min_max(Vec3::ZERO, Vec3::splat(ChunkData::CHUNK_SIZE as f32))
             )).id();
 
             commands.entity(chunk_entity).add_child(child);

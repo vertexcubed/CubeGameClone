@@ -1,5 +1,9 @@
 use bevy::math::{ivec3, IVec3, Vec3};
 
+
+
+
+/// Extension trait for `Vec3`
 pub trait Vec3Ext {
     fn as_block_pos(&self) -> IVec3;
 }
@@ -10,6 +14,8 @@ impl Vec3Ext for Vec3 {
     }
 }
 
+
+/// Trait that represents a block pos in the world. In practice, this is just an extension trait for `IVec3`
 pub trait BlockPos {
     type VecType;
     fn center(&self) -> Vec3;

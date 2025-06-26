@@ -5,9 +5,14 @@ use std::collections::HashMap;
 use std::ops::Deref;
 use std::sync::Arc;
 use bevy::prelude::*;
+use crate::asset::block::BlockAsset;
+use crate::core::AllBlockAssets;
 use crate::core::errors::RegistryError;
+use crate::core::state::LoadingState;
 use crate::registry::block::Block;
 
+/// Plugin that handles registries and registration for certain game object types. 
+/// Examples of this include blocks, items, level entities, machines, etc.,
 #[derive(Default)]
 pub struct RegistryPlugin;
 
@@ -16,6 +21,8 @@ impl Plugin for RegistryPlugin {
         app
             // .insert_resource(BlockRegistry::new())
             .insert_resource(Registry::<Block>::new("block"))
+            .add_systems(OnEnter(LoadingState::Registries), create_block_registry)
+            .add_systems(OnExit(LoadingState::Registries), freeze_registries)
         ;
     }
 }
@@ -134,4 +141,34 @@ impl <T: RegistryObject> Deref for RegistryHandle<T> {
     fn deref(&self) -> &Self::Target {
         self.inner.as_ref()
     }
+}
+
+
+//===============
+//    Systems
+//===============
+fn create_block_registry(
+    mut block_reg: ResMut<Registry<Block>>,
+    all_block_handles: Res<AllBlockAssets>,
+    block_asset: Res<Assets<BlockAsset>>,
+    mut next_load_state: ResMut<NextState<LoadingState>>,
+) -> Result<(), BevyError> {
+    for h in all_block_handles.inner.iter() {
+        let block = Block::from_asset(block_asset.get(h).unwrap());
+        block_reg.register(block)?;
+    }
+    next_load_state.set(LoadingState::Textures);
+
+    Ok(())
+}
+
+
+// freezes registries, moving them to ReadOnlyRegistry resources which are backed by an arc
+fn freeze_registries(
+    world: &mut World
+) {
+    // old writeable registry is removed from the world, and replaced with a Read Only Registry that is backed by an arc.
+    let mut old_reg = world.remove_resource::<Registry<Block>>().unwrap();
+    old_reg.freeze();
+    world.insert_resource(RegistryHandle::new(old_reg));
 }

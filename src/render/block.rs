@@ -7,9 +7,9 @@ use bevy::prelude::Resource;
 use std::sync::Arc;
 use arc_swap::ArcSwap;
 use crate::asset::block::{BlockModelAsset, BlockModelFace, FaceType};
-use crate::asset::procedural::BlockTextures;
 use crate::core::errors::BlockModelError;
 use crate::core::errors::BlockModelError::{CircularDependency, InvalidFace, KeyNotFound};
+use crate::render::material::BlockMaterial;
 use crate::world::block::{BlockState, Direction};
 
 #[derive(Debug, Clone)]
@@ -32,9 +32,6 @@ impl BlockModelMinimal {
         texture_map: &mut HashMap<String, (Handle<Image>, String)>
     ) -> Result<BlockModelMinimal, BlockModelError> {
         let model = block_model_asset.get(model_handle).unwrap();
-        
-        println!("Texture map: {:?}", texture_map);
-        
         
         // add to texture map.
         for (k, v) in model.texture_handles.iter() {
@@ -236,4 +233,17 @@ struct Vertex {
 #[derive(Resource, Debug, Clone, Default)]
 pub struct MeshDataCache {
     pub inner: Arc<ArcSwap<HashMap<BlockState, BlockModelMinimal>>>
+}
+
+#[derive(Debug, Default, Clone, Resource)]
+pub struct BlockTextures {
+    pub map: HashMap<Handle<Image>, u32>,
+    pub array_texture: Handle<Image>,
+    pub material: Handle<BlockMaterial>,
+}
+
+impl BlockTextures {
+    pub fn get_texture_id(&self, name: &Handle<Image>) -> Option<u32> {
+        self.map.get(name).cloned()
+    }
 }

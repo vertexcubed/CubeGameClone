@@ -2,13 +2,14 @@ use std::any::TypeId;
 use bevy::asset::{ron, LoadedFolder};
 use bevy::prelude::*;
 use crate::asset::block::{BlockAsset, BlockLoader, BlockModelAsset, BlockModelLoader};
-use crate::asset::procedural::BlockTextures;
 use crate::core::state::LoadingState;
+use crate::render;
 
 pub mod block;
-pub mod procedural;
 
-// plugin that handles creating array textures and texture atlases
+/// Plugin that handles loading assets using Bevy's Asset system. 
+/// Some of the assets loaded are converted into other data structures 
+/// that are slimmer and contain the info they need only (e.g. BlockAsset -> Block, BlockModelAsset -> BlockModelMinimal).
 #[derive(Default)]
 pub struct GameAssetPlugin;
 
@@ -19,8 +20,6 @@ impl Plugin for GameAssetPlugin {
             .init_asset::<BlockModelAsset>()
             .init_asset_loader::<BlockLoader>()
             .init_asset_loader::<BlockModelLoader>()
-            .init_resource::<BlockTextures>()
-            .add_systems(OnEnter(LoadingState::Textures), procedural::create_block_array_texture)
         ;
     }
 }

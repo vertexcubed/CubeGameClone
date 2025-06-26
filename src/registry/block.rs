@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use crate::asset::block::{BlockAsset, BlockStateAsset};
 use crate::registry::RegistryObject;
 
-// container for all of a block's properties needed at runtime.
+/// The registry representation of a Block. Contains its id, state information, etc.
 #[derive(Debug, Hash, PartialEq, Eq)]
 pub struct Block {
     id: String,
@@ -13,6 +13,8 @@ pub struct Block {
 }
 
 impl Block {
+    
+    /// Creates a Block from a corresponding BlockAsset.
     pub fn from_asset(asset: &BlockAsset) -> Block {
         Block {
             id: asset.id.clone(),
