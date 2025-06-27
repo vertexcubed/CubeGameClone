@@ -1,9 +1,7 @@
-use std::any::TypeId;
+use crate::asset::block::{BlockAsset, BlockLoader, BlockModelAsset, BlockModelLoader};
 use bevy::asset::{ron, LoadedFolder};
 use bevy::prelude::*;
-use crate::asset::block::{BlockAsset, BlockLoader, BlockModelAsset, BlockModelLoader};
-use crate::core::state::LoadingState;
-use crate::render;
+use std::any::TypeId;
 
 pub mod block;
 

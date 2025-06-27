@@ -1,14 +1,12 @@
 use crate::core::errors::ChunkError;
+use crate::math::block::Vec3Ext;
 use crate::world::block::BlockState;
 use bevy::math::ivec3;
-use bevy::prelude::{info, Component, Entity, IVec3, Transform};
+use bevy::prelude::{Component, Entity, IVec3, Transform};
 use bitvec::bitvec;
 use bitvec::order::Msb0;
 use bitvec::prelude::BitVec;
 use bitvec::view::BitViewSized;
-use std::sync::{Arc, RwLock};
-use crate::math::block::Vec3Ext;
-
 
 
 /// A data structure that represents a chunk in the world. Stores some information about it tied to

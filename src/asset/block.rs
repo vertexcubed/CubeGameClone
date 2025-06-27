@@ -1,6 +1,8 @@
 use crate::asset::AssetLoaderError;
+use crate::asset::AssetLoaderError::{InvalidRon, Io};
 use crate::core::errors::RegistryError;
 use crate::core::state::LoadingState;
+use crate::world::block::Direction;
 use bevy::asset::io::Reader;
 use bevy::asset::{ron, AssetLoader, AssetPath, LoadContext, RenderAssetUsages};
 use bevy::prelude::*;
@@ -11,8 +13,6 @@ use bimap::BiMap;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::iter::Map;
-use crate::asset::AssetLoaderError::{InvalidRon, Io};
-use crate::world::block::Direction;
 
 #[derive(Debug, Hash, Clone, PartialEq, Eq, Asset, TypePath, Serialize, Deserialize)]
 #[serde(rename="Block")]

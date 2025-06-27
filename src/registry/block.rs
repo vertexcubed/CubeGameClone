@@ -1,7 +1,7 @@
-use std::collections::BTreeMap;
-use bevy::prelude::*;
 use crate::asset::block::{BlockAsset, BlockStateAsset};
 use crate::registry::RegistryObject;
+use bevy::prelude::*;
+use std::collections::BTreeMap;
 
 /// The registry representation of a Block. Contains its id, state information, etc.
 #[derive(Debug, Hash, PartialEq, Eq)]

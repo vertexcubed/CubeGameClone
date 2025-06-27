@@ -1,11 +1,10 @@
-use std::collections::VecDeque;
-use std::time::Duration;
-use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
-use bevy::prelude::*;
 use crate::math::block::Vec3Ext;
 use crate::world::camera::MainCamera;
-use crate::world::{chunk, CursorTemp};
-use crate::world::block::BlockState;
+use crate::world::{chunk, LookAtData};
+use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
+use bevy::prelude::*;
+use std::collections::VecDeque;
+use std::time::Duration;
 
 #[derive(Default)]
 pub struct GameUiPlugin;
@@ -140,7 +139,7 @@ fn update_position(
 }
 
 fn update_look_target(
-    cursor: Single<&CursorTemp>,
+    cursor: Single<&LookAtData>,
     look: Single<Entity, With<LookTarget>>,
     mut writer: TextUiWriter,
 ) {

@@ -1,9 +1,9 @@
 use bevy::asset::{ron, LoadedFolder};
-use bevy::prelude::*;
-use std::any::TypeId;
 use bevy::pbr::{MaterialPipeline, MaterialPipelineKey};
+use bevy::prelude::*;
 use bevy::render::mesh::{MeshVertexAttribute, MeshVertexBufferLayoutRef, VertexFormat};
 use bevy::render::render_resource::{AsBindGroup, RenderPipelineDescriptor, ShaderRef, SpecializedMeshPipelineError};
+use std::any::TypeId;
 
 
 const SHADER_ASSET_PATH: &str = "shader/block.wgsl";

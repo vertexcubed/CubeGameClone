@@ -1,30 +1,28 @@
-use std::collections::hash_map::Iter;
-use bevy::prelude::{error, info, App, Children, Commands, Component, Entity, EventWriter, Events, First, IVec3, IntoScheduleConfigs, Mesh, Mesh3d, PreUpdate, Query, QueryState, Res, ResMut, Single, Visibility, With};
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::rc::Rc;
-use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use crate::core::errors::ChunkError::DuplicateChunk;
+use crate::core::errors::{ChunkError, WorldError};
+use crate::core::event::SetBlockEvent;
+use crate::registry::block::Block;
+use crate::registry::RegistryHandle;
+use crate::render;
+use crate::render::block::BlockTextures;
+use crate::render::block::MeshDataCache;
+use crate::world::block::BlockState;
+use crate::world::chunk::{Chunk, ChunkData, ChunkMarker, ChunkMeshMarker, ChunkNeedsMeshing};
+use crate::world::{chunk, make_box};
 use bevy::app::PostUpdate;
 use bevy::asset::Assets;
 use bevy::ecs::system::SystemState;
 use bevy::log::info_span;
 use bevy::math::{ivec3, Vec3};
 use bevy::pbr::MeshMaterial3d;
+use bevy::prelude::{error, info, App, Children, Commands, Component, Entity, EventWriter, Events, First, IVec3, IntoScheduleConfigs, Mesh, Mesh3d, PreUpdate, Query, QueryState, Res, ResMut, Single, Visibility, With};
 use bevy::render::primitives::Aabb;
-use bevy::tasks::{block_on, AsyncComputeTaskPool, Task};
 use bevy::tasks::futures_lite::future;
-use crate::render::block::BlockTextures;
-use crate::core::errors::{ChunkError, WorldError};
-use crate::core::errors::ChunkError::DuplicateChunk;
-use crate::core::event::SetBlockEvent;
-use crate::registry::block::Block;
-use crate::registry::RegistryHandle;
-use crate::render;
-use crate::render::block::MeshDataCache;
-use crate::world::block::BlockState;
-use crate::world::{chunk, make_box};
-use crate::world::chunk::{Chunk, ChunkData, ChunkMarker, ChunkMeshMarker, ChunkNeedsMeshing};
-
-
+use bevy::tasks::{block_on, AsyncComputeTaskPool, Task};
+use std::collections::hash_map::Iter;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::rc::Rc;
+use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 
 /// A component that represents a world that can be read/written from. Stores the actual Chunk map,
@@ -37,7 +35,7 @@ pub struct WorldSource {
 }
 
 
-// TODO: migrate to Observers instead
+
 pub struct WorldEvents {
     set_block_event: VecDeque<SetBlockEvent>,
 }

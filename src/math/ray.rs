@@ -1,10 +1,6 @@
-use bevy::math::vec3;
-use bevy::prelude::{IVec3, Vec3};
 use crate::math::block::Vec3Ext;
-
-
-
-
+use bevy::prelude::{IVec3, Vec3};
+use crate::world::block::Direction;
 
 /// Performs a raycast from a starting position to a direction in the world.
 /// The test function is run every block iteration, returning true on a ray hit and false on a ray miss.
@@ -13,7 +9,7 @@ pub fn block_raycast(
     start: Vec3,
     direction: Vec3,
     max_distance: f32,
-    mut test_function: impl FnMut(&RayContext, Vec3, IVec3) -> Result<bool, Box<dyn std::error::Error>>,
+    mut test_function: impl FnMut(&RayContext, Vec3, Direction, IVec3) -> Result<bool, Box<dyn std::error::Error>>,
 ) -> Result<RayResult, Box<dyn std::error::Error>> {
 
 
@@ -45,6 +41,27 @@ pub fn block_raycast(
     // the step vectors. the signs tell you which way to step
     let step = direction.signum();
 
+    // direction = opposite of the direction step is going
+    let x_face = if step.x > 0.0 {
+        Direction::West
+    } else {
+        Direction::East
+    };
+
+    let y_face = if step.y > 0.0 {
+        Direction::Down
+    } else {
+        Direction::Up
+    };
+    let z_face = if step.z > 0.0 {
+        Direction::South
+    } else {
+        Direction::North
+    };
+
+
+
+
     // println!("Step vec: {}", step);
 
     // the delta vector, i.e. delta_t.x * direction will have an x length of 1
@@ -62,11 +79,21 @@ pub fn block_raycast(
 
     while traveled_distance < max_distance {
         let axis = argmin(max_t);
+
+        let face = match axis {
+            0 => x_face,
+            1 => y_face,
+            2 => z_face,
+            _ => panic!("Dead branch")
+        };
+
+
+
         grid_pos[axis] += step[axis];
         
-        let is_hit = test_function(&context, start + (max_t[axis] * direction), grid_pos.as_block_pos())?;
+        let is_hit = test_function(&context, start + (max_t[axis] * direction), face, grid_pos.as_block_pos())?;
         if is_hit {
-            return Ok(RayResult::Hit(start + (max_t[axis] * direction), grid_pos.as_block_pos()))
+            return Ok(RayResult::Hit(start + (max_t[axis] * direction), face, grid_pos.as_block_pos()))
         }
         traveled_distance = max_t[axis];
         // println!("Distance traveled: {}", traveled_distance);
@@ -95,7 +122,7 @@ fn argmin(vec: Vec3) -> usize {
 /// on the block the ray intersected and block pos of the raycast, or a miss.
 #[derive(Debug, Clone)]
 pub enum RayResult {
-    Hit(Vec3, IVec3),
+    Hit(Vec3, Direction, IVec3),
     Miss
 }
 

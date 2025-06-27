@@ -1,27 +1,30 @@
-use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use crate::asset::block::{BlockAsset, BlockModelAsset};
+use crate::core::state::LoadingState;
+use crate::core::AllBlockAssets;
+use crate::registry::block::Block;
+use crate::registry::{RegistryHandle, RegistryObject};
+use crate::render::material::BlockMaterial;
+use crate::world::block::BlockState;
 use bevy::app::{App, Plugin};
 use bevy::asset::{AssetContainer, Assets, RenderAssetUsages};
 use bevy::color::palettes::basic::WHITE;
+use bevy::image::Image;
 use bevy::input::ButtonInput;
-use bevy::pbr::MaterialPlugin;
 use bevy::pbr::wireframe::{NoWireframe, WireframeConfig};
-use bevy::prelude::{BevyError, Handle, KeyCode, Mesh3d, NextState, OnEnter, Query, Res, ResMut, Resource, Update, Visibility, With, Without};
+use bevy::pbr::MaterialPlugin;
+use bevy::prelude::{BevyError, Gizmos, Handle, KeyCode, Mesh3d, NextState, OnEnter, Query, Res, ResMut, Resource, Transform, Update, Visibility, With, Without};
 use bevy::render::mesh::allocator::MeshAllocatorSettings;
+use bevy::render::render_resource::{Extent3d, TextureDimension};
 use bevy::render::RenderApp;
 use bevy::utils::default;
-use bevy::image::Image;
-use bevy::render::render_resource::{Extent3d, TextureDimension};
-use block::{BlockModelMinimal, MeshDataCache};
-use crate::asset::block::{BlockAsset, BlockModelAsset};
 use block::BlockTextures;
-use crate::core::AllBlockAssets;
-use crate::core::state::LoadingState;
-use crate::registry::block::Block;
-use crate::registry::{RegistryHandle, RegistryObject};
-use crate::render;
-use crate::render::material::BlockMaterial;
-use crate::world::block::BlockState;
+use block::{BlockModelMinimal, MeshDataCache};
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+use bevy::color::palettes::css;
+use bevy::math::Vec3;
+use crate::math::block::BlockPos;
+use crate::world::LookAtData;
 
 pub mod material;
 pub mod pipeline;
@@ -51,7 +54,7 @@ impl Plugin for GameRenderPlugin {
             .insert_resource(MeshAllocatorSettings {
                 ..default()
             })
-            .add_systems(Update, toggle_wireframe)
+            .add_systems(Update, (toggle_wireframe, render_look_at_outline))
             .add_systems(OnEnter(LoadingState::BlockCache), create_block_data_cache)
             .add_systems(OnEnter(LoadingState::Textures), create_block_array_texture)
         ;
@@ -94,6 +97,9 @@ fn create_block_data_cache(
     let mut map: HashMap<BlockState, BlockModelMinimal> = HashMap::new();
     let reg = block_reg.as_ref().as_ref();
 
+    // info!("Creating block data cache.");
+
+
     // stores a maps of block model handles to blockstates, the blockstate being the FIRST blockstate to use this exact model handle.
     // Done like this to avoid mutable and immutable borrows at the same time
     let mut models: HashMap<Handle<BlockModelAsset>, BlockState> = HashMap::new();
@@ -121,7 +127,8 @@ fn create_block_data_cache(
 
     }
     cache.inner.store(Arc::new(map));
-    
+
+    // info!("Finished block data cache :)");
     next_load.set(LoadingState::Done);
 
     Ok(())
@@ -138,6 +145,9 @@ fn create_block_array_texture(
     mut next_load_state: ResMut<NextState<LoadingState>>,
     mut materials: ResMut<Assets<BlockMaterial>>,
 ) {
+
+    // info!("Creating block array textures.");
+
     let mut i = 0_u32;
 
     let mut size = None;
@@ -246,4 +256,19 @@ fn create_block_array_texture(
     next_load_state.set(LoadingState::BlockCache);
 
 
+}
+
+
+
+
+fn render_look_at_outline(
+    look_info: Query<&LookAtData>,
+    mut gizmos: Gizmos,
+) {
+    for look in look_info.iter() {
+        let Some(pos) = look.look_pos else {
+            continue;
+        };
+        gizmos.cuboid(Transform::from_translation(pos.center()).with_scale(Vec3::splat(1.0)), css::DARK_GRAY);
+    }
 }

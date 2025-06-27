@@ -1,18 +1,23 @@
-use std::sync::Arc;
+use crate::asset::block::BlockAsset;
+use crate::core::errors::RegistryError;
+use crate::core::event::{JoinedWorldEvent, PlayerMovedEvent, SetBlockEvent};
+use crate::core::state::{LoadingState, MainGameState};
+use crate::registry::block::Block;
+use crate::registry::{Registry, RegistryHandle};
+use crate::world::camera::MainCamera;
+use crate::world::source::WorldSource;
+use crate::{asset, registry};
 use bevy::app::{App, Plugin, Startup, Update};
 use bevy::asset::{AssetServer, Assets, Handle, LoadedFolder, RecursiveDependencyLoadState};
 use bevy::log::error;
 use bevy::prelude::*;
-use crate::{asset, registry};
-use crate::asset::block::{BlockAsset};
-use crate::core::errors::RegistryError;
-use crate::core::event::{PlayerMovedEvent, SetBlockEvent};
-use crate::core::state::{LoadingState, MainGameState};
-use crate::registry::block::{Block};
-use crate::registry::{RegistryHandle, Registry};
+use std::sync::Arc;
 
+#[allow(dead_code)]
 pub mod state;
+#[allow(dead_code)]
 pub mod errors;
+#[allow(dead_code)]
 pub mod event;
 
 /// Core plugin that registers states, events, core systems, etc.
@@ -28,13 +33,10 @@ impl Plugin for CoreGamePlugin {
             .init_state::<LoadingState>()
             .add_event::<PlayerMovedEvent>()
             
-            
-            
             .add_systems(Startup, load_folders)
             .add_systems(Update, (all_folders_loaded, check_loading_blocks)
                 .run_if(in_state(LoadingState::Assets))
             )
-            
             .add_systems(OnEnter(LoadingState::Done), finish_loading)
         ;
     }
@@ -135,5 +137,6 @@ fn all_folders_loaded(
 fn finish_loading(
     mut next_game_state: ResMut<NextState<MainGameState>>,
 ) {
+    // info!("Finished loading.");
     next_game_state.set(MainGameState::InGame);
 }

@@ -1,7 +1,5 @@
 use bevy::math::{ivec3, IVec3, Vec3};
-
-
-
+use crate::world::block::Direction;
 
 /// Extension trait for `Vec3`
 pub trait Vec3Ext {
@@ -20,6 +18,7 @@ pub trait BlockPos {
     type VecType;
     fn center(&self) -> Vec3;
     
+    fn offset(&self, direction: Direction) -> Self::VecType;
     fn up(&self) -> Self::VecType;
     fn down(&self) -> Self::VecType;
     fn north(&self) -> Self::VecType;
@@ -33,6 +32,17 @@ impl BlockPos for IVec3 {
 
     fn center(&self) -> Vec3 {
         self.as_vec3() + 0.5
+    }
+
+    fn offset(&self, direction: Direction) -> Self::VecType {
+        match direction {
+            Direction::Up => self.up(),
+            Direction::Down => self.down(),
+            Direction::North => self.north(),
+            Direction::South => self.south(),
+            Direction::East => self.east(),
+            Direction::West => self.west()
+        }
     }
 
     fn up(&self) -> Self::VecType {
@@ -52,10 +62,10 @@ impl BlockPos for IVec3 {
     }
 
     fn east(&self) -> Self::VecType {
-        self + ivec3(0, 0, 1)
+        self + ivec3(1, 0, 0)
     }
 
     fn west(&self) -> Self::VecType {
-        self + ivec3(0, 0, -1)
+        self + ivec3(-1, 0, 0)
     }
 }

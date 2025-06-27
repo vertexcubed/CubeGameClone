@@ -1,7 +1,20 @@
-use std::collections::{HashMap, VecDeque};
-use std::f32::consts::PI;
-use std::sync::{Arc, RwLock};
-use std::time::Instant;
+use crate::asset::block::BlockModelAsset;
+use crate::core::errors::WorldError;
+use crate::core::event::{JoinedWorldEvent, PlayerMovedEvent, SetBlockEvent};
+use crate::core::state::MainGameState;
+use crate::math::block::{BlockPos, Vec3Ext};
+use crate::math::ray;
+use crate::math::ray::RayResult;
+use crate::registry::block::Block;
+use crate::registry::{Registry, RegistryHandle};
+use crate::render;
+use crate::render::block::BlockTextures;
+use crate::render::block::MeshDataCache;
+use crate::render::material::BlockMaterial;
+use crate::world::block::{BlockState, Direction};
+use crate::world::camera::{CameraSettings, MainCamera};
+use crate::world::chunk::{Chunk, ChunkData, ChunkNeedsMeshing, PaletteEntry};
+use crate::world::source::WorldSource;
 use bevy::asset::AssetContainer;
 use bevy::color::palettes::css;
 use bevy::input::mouse::AccumulatedMouseMotion;
@@ -9,8 +22,8 @@ use bevy::math::bounding::{Aabb3d, IntersectsVolume};
 use bevy::pbr::wireframe::{NoWireframe, WireframeConfig};
 use bevy::prelude::*;
 use bevy::render::primitives::Aabb;
-use bevy::tasks::{block_on, AsyncComputeTaskPool, Task};
 use bevy::tasks::futures_lite::future;
+use bevy::tasks::{block_on, AsyncComputeTaskPool, Task};
 use bevy::window::{CursorGrabMode, PrimaryWindow};
 use bitvec::order::Msb0;
 use bitvec::prelude::BitVec;
@@ -18,23 +31,10 @@ use bitvec::view::BitViewSized;
 use rand::distr::Uniform;
 use rand::Rng;
 use source::ChunkMap;
-use crate::asset::block::BlockModelAsset;
-use crate::render::material::BlockMaterial;
-use crate::render::block::BlockTextures;
-use crate::core::errors::WorldError;
-use crate::core::event::{PlayerMovedEvent, SetBlockEvent};
-use crate::core::state::MainGameState;
-use crate::math::ray;
-use crate::math::block::{BlockPos, Vec3Ext};
-use crate::math::ray::RayResult;
-use crate::registry::block::Block;
-use crate::registry::{Registry, RegistryHandle};
-use crate::render;
-use crate::render::block::MeshDataCache;
-use crate::world::block::BlockState;
-use crate::world::camera::{CameraSettings, MainCamera};
-use crate::world::chunk::{Chunk, ChunkData, ChunkNeedsMeshing, PaletteEntry};
-use crate::world::source::WorldSource;
+use std::collections::{HashMap, VecDeque};
+use std::f32::consts::PI;
+use std::sync::{Arc, RwLock};
+use std::time::Instant;
 
 pub mod chunk;
 pub mod camera;
@@ -51,7 +51,8 @@ impl Plugin for GameWorldPlugin {
             // temp
 
             .add_systems(Update, (handle_input, look_at_block))
-            .add_systems(Update, (temp_create_chunk, temp_set_block).chain())
+            .add_systems(Update, (temp_set_block, place_and_break))
+            .add_systems(PreUpdate, join_world)
             // .add_systems(Update, track_chunks_around_player)
             .add_systems(OnEnter(MainGameState::InGame), (setup, grab_cursor, create_world))
             .add_observer(on_set_block)
@@ -120,11 +121,36 @@ fn handle_input(
 }
 
 
+fn place_and_break(
+    target: Single<&LookAtData>,
+    mut world: Single<&mut WorldSource>,
+    mouse_input: Res<ButtonInput<MouseButton>>,
+    block_registry: Res<RegistryHandle<Block>>
+) -> Result<(), BevyError> {
+    let (Some(pos), Some(face)) = (target.look_pos, target.face) else {
+        return Ok(());
+    };
+    if mouse_input.just_pressed(MouseButton::Left) {
+        world.set_block(&pos, BlockState::new("air", &block_registry)?)?;
+    }
+    else if mouse_input.just_released(MouseButton::Right) {
+
+        let new_pos = pos.offset(face);
+        world.set_block(&new_pos, BlockState::new("stone", &block_registry)?)?;
+    }
+
+
+    Ok(())
+}
+
+
+
+
+
 fn look_at_block(
-    mut transform: Single<&mut Transform, (With<MainCamera>, Without<CursorTemp>)>,
+    mut player: Single<(&mut Transform, &mut LookAtData), With<MainCamera>>,
     world: Single<&WorldSource>,
     kb_input: Res<ButtonInput<KeyCode>>,
-    sphere: Single<(&mut Transform, &mut Visibility, &mut CursorTemp)>,
     mut gizmos: Gizmos,
 ) {
 
@@ -132,7 +158,7 @@ fn look_at_block(
     //     return;
     // }
 
-    let (mut sphere, mut sphere_vis, mut cursor) = sphere.into_inner();
+    let (mut transform, mut look_at_data) = player.into_inner();
 
     let distance = 5.0;
     let view_dir = transform.forward().as_vec3();
@@ -141,7 +167,7 @@ fn look_at_block(
     // gizmos.line(pos, pos + (view_dir * distance), css::GREEN);
 
 
-    let result = ray::block_raycast(pos, view_dir, distance, |_context, _intersection_point, b_pos| {
+    let result = ray::block_raycast(pos, view_dir, distance, |_context, _intersection_point, _face, b_pos| {
         // println!("Testing block {}", b_pos);
 
         let Ok(block) = world.get_block(&b_pos) else {
@@ -161,19 +187,20 @@ fn look_at_block(
         Ok(!b)
     });
     // println!("Result: {:?}", result);
-    if let Ok(RayResult::Hit(pos, b_pos)) = result {
-        *sphere_vis = Visibility::Visible;
-        sphere.translation = pos;
-        cursor.look_pos = Some(b_pos);
-        cursor.surface = Some(pos);
+    if let Ok(RayResult::Hit(pos, face, b_pos)) = result {
+        // *sphere_vis = Visibility::Visible;
+        // look_at_data.translation = pos;
+        look_at_data.look_pos = Some(b_pos);
+        look_at_data.surface = Some(pos);
+        look_at_data.face = Some(face);
 
         let block = world.get_block(&b_pos).unwrap();
 
-        cursor.look_block = Some(block);
+        look_at_data.look_block = Some(block);
     }
     else {
-        *sphere_vis = Visibility::Hidden;
-        *cursor = CursorTemp::default();
+        // *sphere_vis = Visibility::Hidden;
+        *look_at_data = LookAtData::default();
     }
 }
 
@@ -187,10 +214,11 @@ fn grab_cursor(
     window.cursor_options.visible = false;
 }
 #[derive(Component, Default)]
-pub struct CursorTemp {
+pub struct LookAtData {
     pub look_pos: Option<IVec3>,
     pub look_block: Option<BlockState>,
-    pub surface: Option<Vec3>
+    pub surface: Option<Vec3>,
+    pub face: Option<Direction>,
 }
 
 // runs once when InGame reached
@@ -211,6 +239,7 @@ fn setup(
         }),
         MainCamera,
         Transform::from_xyz(0.0, 2.0, 0.0),
+       LookAtData::default(),
     ));
 
     commands.spawn((
@@ -218,12 +247,12 @@ fn setup(
         Transform::from_xyz(25.0, 50.0, 10.0).looking_at(Vec3::ZERO, Vec3::Y)
     ));
 
-    commands.spawn((
-        CursorTemp::default(),
-        Transform::from_xyz(0.0, 0.0, 0.0),
-        MeshMaterial3d(materials.add(Color::srgb(1.0, 0.0, 0.0))),
-        Mesh3d(meshes.add(Sphere {radius: 0.125}.mesh())),
-    ));
+    // commands.spawn((
+    //     LookAtData::default(),
+    //     Transform::from_xyz(0.0, 0.0, 0.0),
+    //     MeshMaterial3d(materials.add(Color::srgb(1.0, 0.0, 0.0))),
+    //     Mesh3d(meshes.add(Sphere {radius: 0.125}.mesh())),
+    // ));
 
 }
 
@@ -250,8 +279,74 @@ fn create_world(
     commands.spawn((
         GameWorld::default(),
         WorldSource::new()
-        ));
+        ))
+        .observe(on_world_join);
 }
+
+
+fn join_world(
+    mut commands: Commands,
+    q_world: Query<Entity, With<WorldSource>>,
+    camera: Single<&Transform, With<MainCamera>>,
+    mut has_run: Local<bool>
+) {
+    if *has_run {
+        return;
+    }
+    for world in q_world.iter() {
+        commands.trigger_targets(JoinedWorldEvent {
+            pos: camera.translation
+        }, world);
+    }
+    *has_run = true;
+}
+
+
+
+fn on_world_join(
+    trigger: Trigger<JoinedWorldEvent>,
+    mut q_world: Query<&mut WorldSource>,
+) {
+    let id = trigger.target();
+    let Ok(mut world) = q_world.get_mut(id) else {
+        return;
+    };
+    let world = world.as_mut();
+
+    let chunk_pos = chunk::pos_to_chunk_pos(trigger.pos.as_block_pos());
+
+    let rad = 5;
+
+    let mut queue = VecDeque::new();
+
+    // force map and read_guard to be dropped before queuing chunk generation
+    {
+        let map = world.get_chunk_map();
+        let read_guard = map.read_guard();
+
+        info!("Loading spawn chunks...");
+        let mut i = 0;
+        for x in -rad..rad + 1 {
+            for z in -rad..rad + 1 {
+                for y in -rad..rad + 1 {
+                    let coord = ivec3(x, y, z) + chunk_pos;
+                    if ChunkMap::get_chunk(&coord, &read_guard).is_some() {
+                        continue;
+                    }
+
+                    queue.push_back(coord);
+
+                    i += 1;
+                }
+            }
+        }
+    }
+
+    while !queue.is_empty() {
+        world.queue_chunk_generation(queue.pop_front().unwrap());
+    }
+}
+
 
 
 fn on_set_block(
@@ -263,56 +358,55 @@ fn on_set_block(
     let map = world.get_chunk_map();
     let read_guard = map.read_guard();
 
-    info!("Block set event");
     let pos = trigger.pos;
     let chunk_pos = chunk::pos_to_chunk_pos(pos);
+
+    // Remesh neighboring chunks if needed
+    let local_pos = chunk::pos_to_chunk_local(pos);
+    
+    let x_axis = if local_pos.x == 0 {
+        Some(chunk_pos.west())
+    } else if local_pos.x == (ChunkData::CHUNK_SIZE as i32 - 1) {
+        Some(chunk_pos.east())
+    } else {
+        None
+    };
+    let y_axis = if local_pos.y == 0 {
+        Some(chunk_pos.down())
+    } else if local_pos.y == (ChunkData::CHUNK_SIZE as i32 - 1) {
+        Some(chunk_pos.up())
+    } else {
+        None
+    };
+    let z_axis = if local_pos.z == 0 {
+        Some(chunk_pos.south())
+    } else if local_pos.z == (ChunkData::CHUNK_SIZE as i32 - 1) {
+        Some(chunk_pos.north())
+    } else {
+        None
+    };
+
+    println!("x: {:?}, y: {:?}, z: {:?}", x_axis, y_axis, z_axis);
+
+
     let chunk = ChunkMap::get_chunk(&chunk_pos, &read_guard).unwrap();
     let entity = chunk.get_entity();
     commands.entity(entity).insert(ChunkNeedsMeshing);
-}
 
-
-
-fn temp_create_chunk(
-    camera: Single<&Transform, With<MainCamera>>,
-    mut world: Single<&mut WorldSource>,
-    kb_input: Res<ButtonInput<KeyCode>>,
-    block_reg: Res<RegistryHandle<Block>>,
-) {
-    let camera_chunk = chunk::transform_to_chunk_pos(&camera);
-
-    let rad = 5;
-
-    let mut queue = VecDeque::new();
-
-    if kb_input.just_pressed(KeyCode::KeyX) {
-        let mut map = world.get_chunk_map_mut();
-        let read_guard = map.read_guard();
-
-        info!("Loading chunks...");
-        let mut i = 0;
-        for x in -rad..rad + 1 {
-            for z in -rad..rad + 1 {
-                for y in -rad..rad + 1 {
-                    let coord = ivec3(x, y, z) + camera_chunk;
-                    if ChunkMap::get_chunk(&coord, &read_guard).is_some() {
-                        continue;
-                    }
-
-                    queue.push_back(coord);
-
-                    i += 1;
-                }
-            }
-        }
-        info!("Created {i} chunk tasks.");
+    // remesh neighboring chunks if necessary
+    if let Some(x_axis) = x_axis {
+        let chunk = ChunkMap::get_chunk(&x_axis, &read_guard).unwrap();
+        commands.entity(chunk.get_entity()).insert(ChunkNeedsMeshing);
     }
-
-    while !queue.is_empty() {
-        world.queue_chunk_generation(queue.pop_front().unwrap());
+    if let Some(y_axis) = y_axis {
+        let chunk = ChunkMap::get_chunk(&y_axis, &read_guard).unwrap();
+        commands.entity(chunk.get_entity()).insert(ChunkNeedsMeshing);
+    }
+    if let Some(z_axis) = z_axis {
+        let chunk = ChunkMap::get_chunk(&z_axis, &read_guard).unwrap();
+        commands.entity(chunk.get_entity()).insert(ChunkNeedsMeshing);
     }
 }
-
 
 fn temp_set_block(
     mut world: Single<&mut WorldSource>,

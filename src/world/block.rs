@@ -1,11 +1,9 @@
-use std::collections::{BTreeMap, HashMap};
-use std::sync::Arc;
-use bevy::prelude::error;
-use serde::{Deserialize, Serialize};
 use crate::core::errors::BlockStateError;
 use crate::core::errors::BlockStateError::InvalidId;
 use crate::registry::block::Block;
 use crate::registry::Registry;
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct BlockState {

@@ -1,15 +1,15 @@
 pub mod block;
 
+use crate::asset::block::BlockAsset;
+use crate::core::errors::RegistryError;
+use crate::core::state::LoadingState;
+use crate::core::AllBlockAssets;
+use crate::registry::block::Block;
+use bevy::prelude::*;
 use std::collections::hash_map::Iter;
 use std::collections::HashMap;
 use std::ops::Deref;
 use std::sync::Arc;
-use bevy::prelude::*;
-use crate::asset::block::BlockAsset;
-use crate::core::AllBlockAssets;
-use crate::core::errors::RegistryError;
-use crate::core::state::LoadingState;
-use crate::registry::block::Block;
 
 /// Plugin that handles registries and registration for certain game object types. 
 /// Examples of this include blocks, items, level entities, machines, etc.,
@@ -153,6 +153,9 @@ fn create_block_registry(
     block_asset: Res<Assets<BlockAsset>>,
     mut next_load_state: ResMut<NextState<LoadingState>>,
 ) -> Result<(), BevyError> {
+
+    info!("Creating block registry.");
+
     for h in all_block_handles.inner.iter() {
         let block = Block::from_asset(block_asset.get(h).unwrap());
         block_reg.register(block)?;

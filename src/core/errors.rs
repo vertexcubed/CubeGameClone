@@ -1,5 +1,5 @@
-use std::fmt::{Display, Formatter};
 use bevy::prelude::IVec3;
+use std::fmt::Display;
 
 #[derive(Debug, thiserror::Error)]
 pub enum RegistryError {
