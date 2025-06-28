@@ -136,7 +136,10 @@ fn place_and_break(
     else if mouse_input.just_released(MouseButton::Right) {
 
         let new_pos = pos.offset(face);
-        world.set_block(&new_pos, BlockState::new("stone", &block_registry)?)?;
+        
+        if world.get_block(&new_pos)?.is_air() {
+            world.set_block(&new_pos, BlockState::new("stone", &block_registry)?)?;
+        }
     }
 
 
@@ -150,8 +153,8 @@ fn place_and_break(
 fn look_at_block(
     mut player: Single<(&mut Transform, &mut LookAtData), With<MainCamera>>,
     world: Single<&WorldSource>,
-    kb_input: Res<ButtonInput<KeyCode>>,
-    mut gizmos: Gizmos,
+    // kb_input: Res<ButtonInput<KeyCode>>,
+    // mut gizmos: Gizmos,
 ) {
 
     // if !kb_input.just_pressed(KeyCode::KeyF) {

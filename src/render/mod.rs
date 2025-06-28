@@ -269,6 +269,6 @@ fn render_look_at_outline(
         let Some(pos) = look.look_pos else {
             continue;
         };
-        gizmos.cuboid(Transform::from_translation(pos.center()).with_scale(Vec3::splat(1.0)), css::DARK_GRAY);
+        gizmos.cuboid(Transform::from_translation(pos.center()).with_scale(Vec3::splat(1.0)), css::BLACK);
     }
 }
