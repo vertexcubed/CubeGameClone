@@ -12,7 +12,7 @@ impl Plugin for GameUiPlugin {
     fn build(&self, app: &mut App) {
         app
 
-            .add_systems(Startup, build_debug_ui)
+            .add_systems(Startup, (build_debug_ui, build_hud))
             .add_systems(Update, (update_fps_text, update_position, update_look_target))
         ;
     }
@@ -26,6 +26,45 @@ struct Position;
 
 #[derive(Component)]
 struct LookTarget;
+
+
+
+fn build_hud(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>
+) {
+    let crosshair: Handle<Image> = asset_server.load("texture/ui/crosshair.png");
+
+
+
+    commands.spawn(
+        Node {
+            width: Val::Percent(100.),
+            height: Val::Percent(100.),
+            flex_direction: FlexDirection::Column,
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            ..default()
+        }
+    ).with_children(|parent| {
+        parent.spawn((
+            ImageNode::from(crosshair),
+            Node {
+                width: Val::Px(16.),
+                height: Val::Px(16.),
+                ..default()
+            }
+        ));
+    });
+
+
+}
+
+
+
+
+
+
 
 fn build_debug_ui(
     mut commands: Commands,

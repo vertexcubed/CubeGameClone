@@ -2,11 +2,11 @@ BlockModel(
     parent: Some("block/base/full"),
 
     textures: {
-        "N": "oak_planks",
-        "S": "oak_planks",
-        "E": "oak_planks",
-        "W": "oak_planks",
-        "U": "oak_planks",
-        "D": "oak_planks"
+        "N": "block/oak_planks",
+        "S": "block/oak_planks",
+        "E": "block/oak_planks",
+        "W": "block/oak_planks",
+        "U": "block/oak_planks",
+        "D": "block/oak_planks"
     }
 )

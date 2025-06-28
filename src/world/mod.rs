@@ -136,7 +136,7 @@ fn place_and_break(
     else if mouse_input.just_released(MouseButton::Right) {
 
         let new_pos = pos.offset(face);
-        
+
         if world.get_block(&new_pos)?.is_air() {
             world.set_block(&new_pos, BlockState::new("stone", &block_registry)?)?;
         }
@@ -366,7 +366,7 @@ fn on_set_block(
 
     // Remesh neighboring chunks if needed
     let local_pos = chunk::pos_to_chunk_local(pos);
-    
+
     let x_axis = if local_pos.x == 0 {
         Some(chunk_pos.west())
     } else if local_pos.x == (ChunkData::CHUNK_SIZE as i32 - 1) {
@@ -441,6 +441,12 @@ fn temp_set_block(
         }
     }
 }
+
+
+
+// Below functions are NOT systems and will be removed at some point
+// =================================================================
+
 
 
 fn make_data(block_reg: &Registry<Block>) -> ChunkData {
@@ -557,13 +563,80 @@ pub fn make_box(block_reg: &Registry<Block>) -> ChunkData {
                 };
 
                 palette[id].increment_ref_count();
-                
+
                 let arr = id.into_bitarray::<Msb0>();
                 // println!("Bitarray: {}", arr);
 
                 let slice = &arr[size_of::<usize>() * 8 - id_size..size_of::<usize>() * 8];
                 // println!("Slice: {}", slice);
                 // println!("Generated num: {}", rand_id);
+
+                vec.append(&mut slice.to_bitvec());
+            }
+        }
+    }
+
+
+    ChunkData::with_data(vec, palette)
+
+}
+
+
+
+fn height_map_temp(pos: IVec3, block_reg: &Registry<Block>) -> BlockState {
+    if pos.y < -4 {
+        BlockState::new("stone", block_reg).unwrap()
+    }
+    else if pos.y <= 0 {
+        BlockState::new("dirt", block_reg).unwrap()
+    }
+    else {
+        BlockState::new("air", block_reg).unwrap()
+    }
+}
+
+
+
+
+
+fn temp_gen_function(chunk_pos: IVec3, block_reg: &Registry<Block>) -> ChunkData {
+    let mut palette = vec![
+        PaletteEntry::new(BlockState::new("air", block_reg).unwrap()),
+        PaletteEntry::new(BlockState::new("stone", block_reg).unwrap()),
+        PaletteEntry::new(BlockState::new("dirt", block_reg).unwrap()),
+    ];
+
+    let id_size = ((palette.len()) as f32).log2().ceil() as usize;
+
+    let mut vec = BitVec::with_capacity(id_size * ChunkData::BLOCKS_PER_CHUNK);
+
+    // Data is stored Z -> X -> Y, so we iterate over all z first then all x then all y.
+    for y in 0..ChunkData::CHUNK_SIZE {
+        for x in 0..ChunkData::CHUNK_SIZE {
+            for z in 0..ChunkData::CHUNK_SIZE {
+                let block_pos = chunk::chunk_pos_to_world_pos(chunk_pos) + ivec3(x as i32, y as i32, z as i32);
+
+                // all of this is temporary lol
+                let state = height_map_temp(block_pos, block_reg);
+                let id = match state.get_id() {
+                    "air" => 0,
+                    "stone" => 1,
+                    "dirt" => 2,
+                    _ => unreachable!(),
+                };
+
+
+
+                palette[id].increment_ref_count();
+
+                // if block_pos.y > 0 && id == 2 {
+                //     println!("Why is this dirt? {}, local: {}", block_pos, ivec3(x as i32, y as i32, z as i32));
+                // }
+
+
+
+                let arr = id.into_bitarray::<Msb0>();
+                let slice = &arr[size_of::<usize>() * 8 - id_size..size_of::<usize>() * 8];
 
                 vec.append(&mut slice.to_bitvec());
             }

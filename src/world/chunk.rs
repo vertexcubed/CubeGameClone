@@ -440,6 +440,9 @@ fn xyz_to_index(x: usize, y: usize, z: usize) -> usize {
 pub fn chunk_pos_to_transform(pos: IVec3) -> Transform {
     Transform::from_xyz((pos.x * ChunkData::CHUNK_SIZE as i32) as f32, (pos.y * ChunkData::CHUNK_SIZE as i32) as f32, (pos.z * ChunkData::CHUNK_SIZE as i32) as f32)
 }
+pub fn chunk_pos_to_world_pos(pos: IVec3) -> IVec3 {
+    pos * ChunkData::CHUNK_SIZE as i32
+}
 pub fn transform_to_chunk_pos(transform: &Transform) -> IVec3 {
     let vec = transform.translation.as_block_pos();
     pos_to_chunk_pos(vec)
