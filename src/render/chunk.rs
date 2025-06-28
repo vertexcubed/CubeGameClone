@@ -1,6 +1,5 @@
 use crate::render::block::{BlockModelMinimal, MeshDataCache};
 use crate::render::material::BlockMaterial;
-use crate::world::block::{BlockState, Direction};
 use crate::world::chunk;
 use crate::world::chunk::ChunkData;
 use bevy::asset::RenderAssetUsages;
@@ -9,6 +8,7 @@ use bevy::math::vec3;
 use bevy::prelude::Mesh;
 use bevy::render::mesh::{Indices, PrimitiveTopology};
 use std::collections::HashMap;
+use crate::world::block::{BlockState, Direction};
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 enum Facing {

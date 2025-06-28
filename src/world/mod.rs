@@ -11,10 +11,9 @@ use crate::render;
 use crate::render::block::BlockTextures;
 use crate::render::block::MeshDataCache;
 use crate::render::material::BlockMaterial;
-use crate::world::block::{BlockState, Direction};
 use crate::world::camera::{CameraSettings, MainCamera};
 use crate::world::chunk::{Chunk, ChunkData, ChunkNeedsMeshing, PaletteEntry};
-use crate::world::source::WorldSource;
+use crate::world::block::BlockWorld;
 use bevy::asset::AssetContainer;
 use bevy::color::palettes::css;
 use bevy::input::mouse::AccumulatedMouseMotion;
@@ -30,16 +29,17 @@ use bitvec::prelude::BitVec;
 use bitvec::view::BitViewSized;
 use rand::distr::Uniform;
 use rand::Rng;
-use source::ChunkMap;
+use block::{BlockState, ChunkMap, Direction};
 use std::collections::{HashMap, VecDeque};
 use std::f32::consts::PI;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
+use crate::world::machine::MachineWorld;
 
 pub mod chunk;
 pub mod camera;
-pub mod source;
 pub mod block;
+pub mod machine;
 
 #[derive(Default)]
 pub struct GameWorldPlugin;
@@ -50,16 +50,51 @@ impl Plugin for GameWorldPlugin {
             .init_resource::<CameraSettings>()
             // temp
 
-            .add_systems(Update, (handle_input, look_at_block))
-            .add_systems(Update, (temp_set_block, place_and_break))
+            .add_systems(Update, (handle_input, look_at_block, place_and_break))
             .add_systems(PreUpdate, join_world)
             // .add_systems(Update, track_chunks_around_player)
-            .add_systems(OnEnter(MainGameState::InGame), (setup, grab_cursor, create_world))
+            .add_systems(OnEnter(MainGameState::InGame), (setup_world, grab_cursor, create_world))
             .add_observer(on_set_block)
         ;
-        source::add_systems(app);
+        block::add_systems(app);
     }
 }
+
+// runs once when InGame reached
+fn setup_world(
+    mut commands: Commands,
+    camera_settings: Res<CameraSettings>,
+
+
+    // mut materials: ResMut<Assets<StandardMaterial>>,
+    // mut meshes: ResMut<Assets<Mesh>>,
+) {
+    info!("Loading world...");
+    commands.spawn((
+        Camera3d::default(),
+        Projection::from(PerspectiveProjection {
+            fov: camera_settings.fov.to_radians(),
+            ..default()
+        }),
+        MainCamera,
+        Transform::from_xyz(0.0, 2.0, 0.0),
+        LookAtData::default(),
+    ));
+
+    commands.spawn((
+        DirectionalLight::default(),
+        Transform::from_xyz(25.0, 50.0, 10.0).looking_at(Vec3::ZERO, Vec3::Y)
+    ));
+
+    // commands.spawn((
+    //     LookAtData::default(),
+    //     Transform::from_xyz(0.0, 0.0, 0.0),
+    //     MeshMaterial3d(materials.add(Color::srgb(1.0, 0.0, 0.0))),
+    //     Mesh3d(meshes.add(Sphere {radius: 0.125}.mesh())),
+    // ));
+
+}
+
 
 fn handle_input(
     mut transform: Single<&mut Transform, With<MainCamera>>,
@@ -121,9 +156,13 @@ fn handle_input(
 }
 
 
+
+
+
 fn place_and_break(
+    mut commands: Commands,
     target: Single<&LookAtData>,
-    mut world: Single<&mut WorldSource>,
+    mut world: Single<&mut BlockWorld>,
     mouse_input: Res<ButtonInput<MouseButton>>,
     block_registry: Res<RegistryHandle<Block>>
 ) -> Result<(), BevyError> {
@@ -131,14 +170,14 @@ fn place_and_break(
         return Ok(());
     };
     if mouse_input.just_pressed(MouseButton::Left) {
-        world.set_block(&pos, BlockState::new("air", &block_registry)?)?;
+        world.set_block(&mut commands, &pos, BlockState::new("air", &block_registry)?)?;
     }
     else if mouse_input.just_released(MouseButton::Right) {
 
         let new_pos = pos.offset(face);
 
         if world.get_block(&new_pos)?.is_air() {
-            world.set_block(&new_pos, BlockState::new("stone", &block_registry)?)?;
+            world.set_block(&mut commands, &new_pos, BlockState::new("stone", &block_registry)?)?;
         }
     }
 
@@ -147,12 +186,9 @@ fn place_and_break(
 }
 
 
-
-
-
 fn look_at_block(
     mut player: Single<(&mut Transform, &mut LookAtData), With<MainCamera>>,
-    world: Single<&WorldSource>,
+    world: Single<&BlockWorld>,
     // kb_input: Res<ButtonInput<KeyCode>>,
     // mut gizmos: Gizmos,
 ) {
@@ -206,8 +242,6 @@ fn look_at_block(
         *look_at_data = LookAtData::default();
     }
 }
-
-
 fn grab_cursor(
     mut window: Single<&mut Window, With<PrimaryWindow>>,
 ) {
@@ -216,6 +250,7 @@ fn grab_cursor(
     // also hide the cursor
     window.cursor_options.visible = false;
 }
+
 #[derive(Component, Default)]
 pub struct LookAtData {
     pub look_pos: Option<IVec3>,
@@ -224,54 +259,8 @@ pub struct LookAtData {
     pub face: Option<Direction>,
 }
 
-// runs once when InGame reached
-fn setup(
-    mut commands: Commands,
-    camera_settings: Res<CameraSettings>,
-
-
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut meshes: ResMut<Assets<Mesh>>,
-) {
-    info!("Loading world...");
-    commands.spawn((
-        Camera3d::default(),
-        Projection::from(PerspectiveProjection {
-            fov: camera_settings.fov.to_radians(),
-            ..default()
-        }),
-        MainCamera,
-        Transform::from_xyz(0.0, 2.0, 0.0),
-       LookAtData::default(),
-    ));
-
-    commands.spawn((
-        DirectionalLight::default(),
-        Transform::from_xyz(25.0, 50.0, 10.0).looking_at(Vec3::ZERO, Vec3::Y)
-    ));
-
-    // commands.spawn((
-    //     LookAtData::default(),
-    //     Transform::from_xyz(0.0, 0.0, 0.0),
-    //     MeshMaterial3d(materials.add(Color::srgb(1.0, 0.0, 0.0))),
-    //     Mesh3d(meshes.add(Sphere {radius: 0.125}.mesh())),
-    // ));
-
-}
-
-#[derive(Component)]
-pub struct GameWorld {
-    // pub generator_func: Arc<dyn Fn(IVec3) -> ChunkData + Send + Sync>
-}
-impl Default for GameWorld {
-    fn default() -> Self {
-        Self {
-            // generator_func: Arc::new(|i| {
-            //     make_box()
-            // })
-        }
-    }
-}
+#[derive(Component, Default)]
+pub struct MainWorld;
 
 
 fn create_world(
@@ -280,8 +269,9 @@ fn create_world(
 
 
     commands.spawn((
-        GameWorld::default(),
-        WorldSource::new()
+        MainWorld::default(),
+        BlockWorld::new(),
+        MachineWorld::new(),
         ))
         .observe(on_world_join);
 }
@@ -289,7 +279,7 @@ fn create_world(
 
 fn join_world(
     mut commands: Commands,
-    q_world: Query<Entity, With<WorldSource>>,
+    q_world: Query<Entity, With<BlockWorld>>,
     camera: Single<&Transform, With<MainCamera>>,
     mut has_run: Local<bool>
 ) {
@@ -308,7 +298,7 @@ fn join_world(
 
 fn on_world_join(
     trigger: Trigger<JoinedWorldEvent>,
-    mut q_world: Query<&mut WorldSource>,
+    mut q_world: Query<&mut BlockWorld>,
 ) {
     let id = trigger.target();
     let Ok(mut world) = q_world.get_mut(id) else {
@@ -355,7 +345,7 @@ fn on_world_join(
 fn on_set_block(
     trigger: Trigger<SetBlockEvent>,
     mut commands: Commands,
-    world: Single<&WorldSource>,
+    world: Single<&BlockWorld>,
 ) {
 
     let map = world.get_chunk_map();
@@ -410,38 +400,6 @@ fn on_set_block(
         commands.entity(chunk.get_entity()).insert(ChunkNeedsMeshing);
     }
 }
-
-fn temp_set_block(
-    mut world: Single<&mut WorldSource>,
-    kb_input: Res<ButtonInput<KeyCode>>,
-    camera: Single<&Transform, With<MainCamera>>,
-    block_reg: Res<RegistryHandle<Block>>,
-) {
-
-    if kb_input.just_pressed(KeyCode::KeyV) {
-        let camera_chunk = chunk::transform_to_chunk_pos(&camera);
-        let pos = camera.translation.floor().as_ivec3();
-        let pos_in_chunk = chunk::pos_to_chunk_local(pos);
-        info!("Pos: {}, camera chunk: {}, pos in chunk: {}", pos, camera_chunk, pos_in_chunk);
-    }
-
-    if kb_input.just_pressed(KeyCode::KeyC) {
-        // chunk coord of camera
-
-        let camera_pos = camera.translation.as_block_pos();
-        let new = BlockState::new("oak_slab", block_reg.as_ref()).unwrap();
-
-        match world.set_block(&camera_pos, new.clone()) {
-            Ok(old) => {
-                info!("Block set. Old: {:?}, new: {:?}", old, new);
-            }
-            Err(e) => {
-                error!("Error setting block: {e}");
-            }
-        }
-    }
-}
-
 
 
 // Below functions are NOT systems and will be removed at some point

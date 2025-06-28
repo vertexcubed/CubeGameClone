@@ -5,7 +5,7 @@ use crate::core::state::{LoadingState, MainGameState};
 use crate::registry::block::Block;
 use crate::registry::{Registry, RegistryHandle};
 use crate::world::camera::MainCamera;
-use crate::world::source::WorldSource;
+use crate::world::block::BlockWorld;
 use crate::{asset, registry};
 use bevy::app::{App, Plugin, Startup, Update};
 use bevy::asset::{AssetServer, Assets, Handle, LoadedFolder, RecursiveDependencyLoadState};

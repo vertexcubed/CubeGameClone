@@ -2,7 +2,6 @@ use crate::asset::block::{BlockModelAsset, BlockModelFace, FaceType};
 use crate::core::errors::BlockModelError;
 use crate::core::errors::BlockModelError::{CircularDependency, InvalidFace, KeyNotFound};
 use crate::render::material::BlockMaterial;
-use crate::world::block::{BlockState, Direction};
 use arc_swap::ArcSwap;
 use bevy::asset::{Assets, Handle};
 use bevy::image::Image;
@@ -11,6 +10,7 @@ use bevy::prelude::Resource;
 use std::collections::{HashMap, HashSet};
 use std::slice::Iter;
 use std::sync::Arc;
+use crate::world::block::{BlockState, Direction};
 
 #[derive(Debug, Clone)]
 pub struct BlockModelMinimal {
