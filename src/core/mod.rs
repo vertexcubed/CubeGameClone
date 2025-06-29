@@ -31,7 +31,6 @@ impl Plugin for CoreGamePlugin {
             .init_resource::<AllBlockAssets>()
             .init_state::<MainGameState>()
             .init_state::<LoadingState>()
-            .add_event::<PlayerMovedEvent>()
             
             .add_systems(Startup, load_folders)
             .add_systems(Update, (all_folders_loaded, check_loading_blocks)

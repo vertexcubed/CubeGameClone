@@ -36,7 +36,9 @@ pub enum ChunkError {
     #[error("Chunk {0} is already initialized.")]
     AlreadyInitialized(IVec3),
     #[error("Chunk {0} already exists.")]
-    DuplicateChunk(IVec3)
+    DuplicateChunk(IVec3),
+    #[error("Chunk {0} not found in chunk map.")]
+    NotFound(IVec3),
 }
 
 #[derive(Debug, thiserror::Error)]

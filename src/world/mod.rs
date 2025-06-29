@@ -55,6 +55,7 @@ impl Plugin for GameWorldPlugin {
             // .add_systems(Update, track_chunks_around_player)
             .add_systems(OnEnter(MainGameState::InGame), (setup_world, grab_cursor, create_world))
             .add_observer(on_set_block)
+            .add_observer(spawn_and_despawn_chunks)
         ;
         block::add_systems(app);
     }
@@ -97,13 +98,13 @@ fn setup_world(
 
 
 fn handle_input(
+    mut commands: Commands,
     mut transform: Single<&mut Transform, With<MainCamera>>,
     // mut proj: Single<&mut Projection, With<MainCamera>>,
     camera_settings: Res<CameraSettings>,
     timer: Res<Time>,
     kb_input: Res<ButtonInput<KeyCode>>,
     mouse_motion: Res<AccumulatedMouseMotion>,
-    mut player_moved: EventWriter<PlayerMovedEvent>,
 ) {
     let delta = mouse_motion.delta;
 
@@ -148,7 +149,7 @@ fn handle_input(
     movement = movement.normalize_or_zero();
     transform.translation += movement * camera_settings.movement_speed * timer.delta_secs();
     if movement != Vec3::ZERO {
-        player_moved.write(PlayerMovedEvent {
+        commands.trigger(PlayerMovedEvent {
             old,
             new: transform.translation
         });
@@ -338,6 +339,82 @@ fn on_world_join(
     while !queue.is_empty() {
         world.queue_chunk_generation(queue.pop_front().unwrap());
     }
+}
+
+
+
+// Spawns and despawns chunks
+fn spawn_and_despawn_chunks(
+    trigger: Trigger<PlayerMovedEvent>,
+    mut world: Single<&mut BlockWorld>,
+) {
+
+    let old_chunk = chunk::pos_to_chunk_pos(trigger.old.as_block_pos());
+    let new_chunk = chunk::pos_to_chunk_pos(trigger.new.as_block_pos());
+    if old_chunk == new_chunk {
+        return;
+    }
+    // info!("Processing chunks to spawn/despawn");
+    let world = world.as_mut();
+    
+    let mut to_generate = VecDeque::new();
+    let mut to_despawn = VecDeque::new();
+    
+    // immutable world access
+    {
+        // player has changed chunks - determine what chunks to load or unload
+        let read_guard = world.get_chunk_map().read_guard();
+
+        let spawn_distance = 5;
+        let spawn_squared = (spawn_distance * spawn_distance) as f32;
+
+        // for all chunks within the radius
+        for x in -spawn_distance..spawn_distance + 1 {
+            for y in -spawn_distance..spawn_distance + 1 {
+                for z in -spawn_distance..spawn_distance + 1 {
+                    let distance = vec3(x as f32, y as f32, z as f32).distance_squared(Vec3::ZERO);
+                    // skip chunks not close enough
+                    if distance > spawn_squared {
+                        continue;
+                    }
+                    let pos = new_chunk + ivec3(x, y, z);
+                    // skip chunks already in the chunk map
+                    if let Some(chunk) = ChunkMap::get_chunk(&pos, &read_guard) {
+                        // println!("Chunk {pos} exists, damn. Is initialized: {}", chunk.is_initialized());
+                        continue;
+                    }
+                    // println!("{pos} is not in chunk map, queuing...");
+                    to_generate.push_back(pos);
+                }
+            }
+        }
+        let despawn_distance = 7.0;
+        let despawn_squared = despawn_distance * despawn_distance;
+
+
+
+        // despawn chunks
+        for (pos, _) in ChunkMap::iter(&read_guard) {
+            let distance = new_chunk.as_vec3().distance_squared(pos.as_vec3());
+
+            if distance > despawn_squared {
+                // queue despawn
+                to_despawn.push_back(pos.clone());
+            }
+
+        }
+    }
+    // mutable world access
+    while !to_generate.is_empty() {
+        let pos = to_generate.pop_front().unwrap();
+        world.queue_chunk_generation(pos);
+    }
+    while !to_despawn.is_empty() {
+        let pos = to_despawn.pop_front().unwrap();
+        world.queue_chunk_despawn(pos);
+    }
+    
+
 }
 
 

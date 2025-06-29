@@ -1,3 +1,4 @@
+use bevy::log::info_span;
 use crate::core::errors::ChunkError;
 use crate::math::block::Vec3Ext;
 use crate::world::block::BlockState;
@@ -85,6 +86,10 @@ impl Chunk {
         if self.data.is_some() {
             return Err(ChunkError::AlreadyInitialized(self.pos));
         }
+        let _span = info_span!("chunk_init_data").entered();
+        
+        
+        
         self.data = Some(data);
 
         //TODO: switch to AfterTerrain when implemented decorators

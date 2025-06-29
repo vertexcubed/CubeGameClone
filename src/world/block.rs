@@ -1,4 +1,4 @@
-use crate::core::errors::ChunkError::DuplicateChunk;
+use crate::core::errors::ChunkError::{DuplicateChunk, NotFound};
 use crate::core::errors::{BlockStateError, ChunkError, WorldError};
 use crate::core::event::SetBlockEvent;
 use crate::registry::block::Block;
@@ -40,6 +40,7 @@ pub struct BlockWorld {
 #[derive(Debug, Default)]
 pub struct ChunkQueue {
     to_generate: VecDeque<IVec3>,
+    to_despawn: VecDeque<IVec3>,
     currently_generating: HashMap<IVec3, Task<ChunkData>>,
     finished_generating: VecDeque<(IVec3, ChunkData)>,
     currently_meshing: HashMap<IVec3, Task<Option<Mesh>>>,
@@ -101,6 +102,9 @@ impl BlockWorld {
 
     pub fn queue_chunk_generation(&mut self, pos: IVec3) {
         self.chunk_queue.to_generate.push_back(pos);
+    }
+    pub fn queue_chunk_despawn(&mut self, pos: IVec3) {
+        self.chunk_queue.to_despawn.push_back(pos);
     }
 }
 
@@ -169,6 +173,13 @@ impl ChunkMap {
 
         Ok(())
     }
+    
+    pub fn remove_chunk(pos: IVec3, guard: &mut RwLockWriteGuard<ChunkMapData>) -> Result<Chunk, ChunkError> {
+        if !guard.map.contains_key(&pos) {
+            return Err(NotFound(pos));
+        }
+        Ok(guard.map.remove(&pos).unwrap())
+    }
 }
 
 
@@ -181,7 +192,7 @@ impl ChunkMap {
 // ===================================
 pub fn add_systems(app: &mut App) {
     app
-        .add_systems(PreUpdate, (process_generate_queue, receive_generated_chunks, insert_chunk_data, queue_mesh_creation).chain())
+        .add_systems(PreUpdate, (process_generate_queue, process_despawn_queue, receive_generated_chunks, insert_chunk_data, queue_mesh_creation).chain())
         .add_systems(PreUpdate, (receive_generated_meshes, upload_meshes))
     ;
 }
@@ -232,7 +243,33 @@ fn process_generate_queue(
     }
 }
 
+fn process_despawn_queue(
+    mut world: Single<&mut BlockWorld>,
+    mut commands: Commands,
+) {
+    let world = world.as_mut();
+    let (map, chunk_queue) = (&mut world.map, &mut world.chunk_queue);
 
+    if chunk_queue.to_despawn.is_empty() {
+        return;
+    }
+
+    let mut write_guard = map.write_guard();
+
+    while !chunk_queue.to_despawn.is_empty() {
+        let pos = chunk_queue.to_despawn.pop_front().unwrap();
+        let old_chunk = match ChunkMap::remove_chunk(pos, &mut write_guard) {
+            Ok(o) => o,
+            Err(e) => {
+                error!("Error despawning chunks: {}", e);
+                continue;
+            }
+        };
+        commands.entity(old_chunk.get_entity()).despawn();
+        
+    }
+    
+}
 
 
 
@@ -266,6 +303,7 @@ fn insert_chunk_data(
     mut world: Single<&mut BlockWorld>,
     mut commands: Commands,
 ) {
+    let _ = info_span!("main_body").entered();
     let world = world.as_mut();
 
     let (map, chunk_queue) = (&mut world.map, &mut world.chunk_queue);
@@ -274,8 +312,12 @@ fn insert_chunk_data(
         return;
     }
 
+    let _guard = info_span!("grab_write_guard").entered();
     let mut write_guard = map.write_guard();
-
+    _guard.exit();
+    
+    
+    // println!("Inserting {} chunk data.", chunk_queue.finished_generating.len());
     // let mut write_guard = world.map.write_guard();
     while !chunk_queue.finished_generating.is_empty() {
         let (pos, data) = chunk_queue.finished_generating.pop_front().unwrap();
@@ -291,6 +333,7 @@ fn insert_chunk_data(
             error!("Error initializing chunk: {e}")
         }
 
+        let _ = info_span!("insert_needs_meshing").entered();
         let entity = chunk.get_entity();
         commands.entity(entity).insert(ChunkNeedsMeshing);
     }
