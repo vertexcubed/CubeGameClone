@@ -1,3 +1,4 @@
+use std::sync::{Arc, RwLock};
 use bevy::log::info_span;
 use crate::core::errors::ChunkError;
 use crate::math::block::Vec3Ext;
@@ -19,8 +20,7 @@ pub struct Chunk {
     // data may be read by multiple threads, but only modified by one thread.
     // Structure somewhat mirrors how chunks are stored to disk
     // Note: this may not be available! Especially if the chunk is not generated yet.
-    // TODO: remove Arc here, as it's redundant (clone the ChunkMap instead)
-    data: Option<ChunkData>,
+    data: Option<Arc<RwLock<ChunkData>>>,
     // The entity ID of the corresponding entity.
     // The entity stores all mesh information and rendering data and other in world data
     chunk_entity: Entity,
@@ -40,11 +40,11 @@ impl Chunk {
     /// borrows the inner ChunkData. Mostly used for meshing on other threads, or for bulk read/writes / specific operations on the data.
     /// Unlike the main getter/setter method, you CAN read and write while a chunk is not fully generated, however this method still returns
     /// an error if the chunk data is None.
-    pub fn get_data(&self) -> Result<&ChunkData, ChunkError> {
+    pub fn get_data(&self) -> Result<Arc<RwLock<ChunkData>>, ChunkError> {
         if self.data.is_none() {
             return Err(ChunkError::Uninitialized(self.pos));
         }
-        Ok(self.data.as_ref().unwrap())
+        Ok(self.data.as_ref().unwrap().clone())
     }
 
     pub fn set_block(&mut self, pos: IVec3, state: BlockState) -> Result<BlockState, ChunkError> {
@@ -52,7 +52,8 @@ impl Chunk {
             return Err(ChunkError::Uninitialized(self.pos));
         }
         let data = self.data.as_mut().unwrap();
-        data.set_block(pos.x as usize, pos.y as usize, pos.z as usize, state)
+        let mut write_lock = data.write().unwrap();
+        write_lock.set_block(pos.x as usize, pos.y as usize, pos.z as usize, state)
     }
 
     pub fn get_block(&self, pos: IVec3) -> Result<BlockState, ChunkError> {
@@ -60,7 +61,8 @@ impl Chunk {
             return Err(ChunkError::Uninitialized(self.pos));
         }
         let data = self.data.as_ref().unwrap();
-        data.get_block(pos.x as usize, pos.y as usize, pos.z as usize)
+        let read_lock = data.read().unwrap();
+        read_lock.get_block(pos.x as usize, pos.y as usize, pos.z as usize)
     }
 
     pub fn get_pos(&self) -> IVec3 {
@@ -87,10 +89,10 @@ impl Chunk {
             return Err(ChunkError::AlreadyInitialized(self.pos));
         }
         let _span = info_span!("chunk_init_data").entered();
-        
-        
-        
-        self.data = Some(data);
+
+
+
+        self.data = Some(Arc::new(RwLock::new(data)));
 
         //TODO: switch to AfterTerrain when implemented decorators
         self.generation_status = ChunkGenerationStatus::Generated;

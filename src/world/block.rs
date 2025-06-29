@@ -63,8 +63,7 @@ impl BlockWorld {
         let pos = pos.clone();
         let chunk_pos = chunk::pos_to_chunk_pos(pos);
         let chunk_local = chunk::pos_to_chunk_local(pos);
-        let read_guard = self.map.read_guard();
-        let Some(chunk) = ChunkMap::get_chunk(&chunk_pos, &read_guard) else {
+        let Some(chunk) = self.map.get_chunk(&chunk_pos) else {
             return Err(WorldError::UnloadedChunk(chunk_pos));
         };
         Ok(chunk.get_block(chunk_local)?)
@@ -76,8 +75,7 @@ impl BlockWorld {
         let pos = pos.clone();
         let chunk_pos = chunk::pos_to_chunk_pos(pos);
         let chunk_local = chunk::pos_to_chunk_local(pos);
-        let mut write_lock = self.map.write_guard();
-        let Some(chunk) = ChunkMap::get_chunk_mut(&chunk_pos, &mut write_lock) else {
+        let Some(chunk) = self.map.get_chunk_mut(&chunk_pos) else {
             return Err(WorldError::UnloadedChunk(chunk_pos));
         };
         let res = chunk.set_block(chunk_local, block.clone())?;
@@ -116,69 +114,52 @@ impl BlockWorld {
 
 
 
-#[derive(Debug)]
-pub struct ChunkMapData {
-    map: HashMap<IVec3, Chunk>
-}
-
-
 /// Stores entity ids for all chunks currently loaded in the world / in memory.
 /// Backed by an Arc, so can be cloned and sent to other threads.
 /// All operations will require you to acquire a LockGuard first.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ChunkMap {
-    data: Arc<RwLock<ChunkMapData>>
+    data: HashMap<IVec3, Chunk>
 }
 impl Default for ChunkMap {
     fn default() -> Self {
         Self {
-            data: Arc::new(RwLock::new(ChunkMapData {
-                // 1000 item capacity, since there will prob be a lot of chunks in the buffer tbh
-                map: HashMap::with_capacity(1000)
-            }))
+            data: HashMap::with_capacity(1000)
         }
     }
 }
 
 impl ChunkMap {
 
-    pub fn read_guard(&self) -> RwLockReadGuard<ChunkMapData> {
-        self.data.read().unwrap()
-    }
-
-    pub fn write_guard(&mut self) -> RwLockWriteGuard<ChunkMapData> {
-        self.data.write().unwrap()
-    }
-
     // gets the chunk entity at this position. Cheap to clone.
-    pub fn get_chunk<'a>(pos: &IVec3, guard: &'a RwLockReadGuard<ChunkMapData>) -> Option<&'a Chunk> {
-        guard.map.get(pos)
+    pub fn get_chunk(&self, pos: &IVec3) -> Option<&Chunk> {
+        self.data.get(pos)
     }
 
-    pub fn get_chunk_mut<'a>(pos: &IVec3, guard: &'a mut RwLockWriteGuard<ChunkMapData>) -> Option<&'a mut Chunk> {
-        guard.map.get_mut(pos)
+    pub fn get_chunk_mut(&mut self, pos: &IVec3) -> Option<&mut Chunk> {
+        self.data.get_mut(pos)
     }
     
-    pub fn iter<'a>(guard: &'a RwLockReadGuard<ChunkMapData>) -> Iter<'a, IVec3, Chunk> {
-        guard.map.iter()
+    pub fn iter(&self) -> Iter<'_, IVec3, Chunk> {
+        self.data.iter()
     }
 
-    pub fn add_chunk(chunk: Chunk, guard: &mut RwLockWriteGuard<ChunkMapData>) -> Result<(), ChunkError> {
+    pub fn add_chunk(&mut self, chunk: Chunk) -> Result<(), ChunkError> {
         let pos = chunk.get_pos();
-        if guard.map.contains_key(&pos) {
+        if self.data.contains_key(&pos) {
             return Err(DuplicateChunk(pos));
         }
-        guard.map.insert(pos, chunk);
+        self.data.insert(pos, chunk);
 
 
         Ok(())
     }
-    
-    pub fn remove_chunk(pos: IVec3, guard: &mut RwLockWriteGuard<ChunkMapData>) -> Result<Chunk, ChunkError> {
-        if !guard.map.contains_key(&pos) {
+
+    pub fn remove_chunk(&mut self, pos: IVec3) -> Result<Chunk, ChunkError> {
+        if !self.data.contains_key(&pos) {
             return Err(NotFound(pos));
         }
-        Ok(guard.map.remove(&pos).unwrap())
+        Ok(self.data.remove(&pos).unwrap())
     }
 }
 
@@ -209,8 +190,6 @@ fn process_generate_queue(
         return;
     }
 
-    let mut write_guard = map.write_guard();
-
     while !chunk_queue.to_generate.is_empty() {
         let pos = chunk_queue.to_generate.pop_front().unwrap();
 
@@ -226,7 +205,7 @@ fn process_generate_queue(
 
         let chunk = Chunk::new(pos, chunk_entity);
 
-        if let Err(e) = ChunkMap::add_chunk(chunk, &mut write_guard) {
+        if let Err(e) = map.add_chunk(chunk) {
             error!("Failed to add chunk: {}", e);
             continue;
         }
@@ -254,11 +233,10 @@ fn process_despawn_queue(
         return;
     }
 
-    let mut write_guard = map.write_guard();
 
     while !chunk_queue.to_despawn.is_empty() {
         let pos = chunk_queue.to_despawn.pop_front().unwrap();
-        let old_chunk = match ChunkMap::remove_chunk(pos, &mut write_guard) {
+        let old_chunk = match map.remove_chunk(pos) {
             Ok(o) => o,
             Err(e) => {
                 error!("Error despawning chunks: {}", e);
@@ -266,9 +244,9 @@ fn process_despawn_queue(
             }
         };
         commands.entity(old_chunk.get_entity()).despawn();
-        
+
     }
-    
+
 }
 
 
@@ -303,7 +281,6 @@ fn insert_chunk_data(
     mut world: Single<&mut BlockWorld>,
     mut commands: Commands,
 ) {
-    let _ = info_span!("main_body").entered();
     let world = world.as_mut();
 
     let (map, chunk_queue) = (&mut world.map, &mut world.chunk_queue);
@@ -312,11 +289,6 @@ fn insert_chunk_data(
         return;
     }
 
-    let _guard = info_span!("grab_write_guard").entered();
-    let mut write_guard = map.write_guard();
-    _guard.exit();
-    
-    
     // println!("Inserting {} chunk data.", chunk_queue.finished_generating.len());
     // let mut write_guard = world.map.write_guard();
     while !chunk_queue.finished_generating.is_empty() {
@@ -325,7 +297,7 @@ fn insert_chunk_data(
         // info!("Finished generating chunk {pos}, inserting...");
 
 
-        let Some(chunk) = ChunkMap::get_chunk_mut(&pos, &mut write_guard) else {
+        let Some(chunk) = map.get_chunk_mut(&pos) else {
             error!("Chunk {pos} doesn't exist!");
             continue;
         };
@@ -353,8 +325,6 @@ fn queue_mesh_creation(
     let world = world.as_mut();
     let (map, chunk_queue) = (&world.map, &mut world.chunk_queue);
 
-    let read_guard = map.read_guard();
-
     let iter = chunks_to_mesh.iter();
 
     for (entity, marker) in iter {
@@ -362,19 +332,18 @@ fn queue_mesh_creation(
 
         // info!("Meshing chunk {pos}...");
 
-        let chunk = ChunkMap::get_chunk(&pos, &read_guard).unwrap();
+        let chunk = map.get_chunk(&pos).unwrap();
 
-        let north = ChunkMap::get_chunk(&(pos + ivec3(0, 0, 1)), &read_guard);
-        let south = ChunkMap::get_chunk(&(pos + ivec3(0, 0, -1)), &read_guard);
-        let east = ChunkMap::get_chunk(&(pos + ivec3(1, 0, 0)), &read_guard);
-        let west = ChunkMap::get_chunk(&(pos + ivec3(-1, 0, 0)), &read_guard);
-        let up = ChunkMap::get_chunk(&(pos + ivec3(0, 1, 0)), &read_guard);
-        let down = ChunkMap::get_chunk(&(pos + ivec3(0, -1, 0)), &read_guard);
+        let north = map.get_chunk(&(pos + ivec3(0, 0, 1)));
+        let south = map.get_chunk(&(pos + ivec3(0, 0, -1)));
+        let east = map.get_chunk(&(pos + ivec3(1, 0, 0)));
+        let west = map.get_chunk(&(pos + ivec3(-1, 0, 0)));
+        let up = map.get_chunk(&(pos + ivec3(0, 1, 0)));
+        let down = map.get_chunk(&(pos + ivec3(0, -1, 0)));
         if let (Some(north), Some(south), Some(east), Some(west), Some(up), Some(down)) = (north, south, east, west, up, down) {
 
             // moved into thread
             let cache = mesh_cache.clone();
-            let chunk_map = map.clone();
             if !(
                 chunk.is_initialized() &&
                 north.is_initialized() &&
@@ -387,20 +356,27 @@ fn queue_mesh_creation(
                 continue;
             }
 
+            let data_arc = chunk.get_data().unwrap();
+            let north_arc = north.get_data().unwrap();
+            let south_arc = south.get_data().unwrap();
+            let east_arc = east.get_data().unwrap();
+            let west_arc = west.get_data().unwrap();
+            let up_arc = up.get_data().unwrap();
+            let down_arc = down.get_data().unwrap();
+
+
+
             let task = AsyncComputeTaskPool::get().spawn(async move {
                 // read the data
 
-                let thread_read_guard = chunk_map.read_guard();
 
-
-
-                let data = ChunkMap::get_chunk(&pos, &thread_read_guard).unwrap().get_data().unwrap();
-                let north_data = ChunkMap::get_chunk(&(pos + ivec3(0, 0, 1)), &thread_read_guard).unwrap().get_data().unwrap();
-                let south_data = ChunkMap::get_chunk(&(pos + ivec3(0, 0, -1)), &thread_read_guard).unwrap().get_data().unwrap();
-                let east_data = ChunkMap::get_chunk(&(pos + ivec3(1, 0, 0)), &thread_read_guard).unwrap().get_data().unwrap();
-                let west_data = ChunkMap::get_chunk(&(pos + ivec3(-1, 0, 0)), &thread_read_guard).unwrap().get_data().unwrap();
-                let up_data = ChunkMap::get_chunk(&(pos + ivec3(0, 1, 0)), &thread_read_guard).unwrap().get_data().unwrap();
-                let down_data = ChunkMap::get_chunk(&(pos + ivec3(0, -1, 0)), &thread_read_guard).unwrap().get_data().unwrap();
+                let data = data_arc.read().unwrap();
+                let north_data = north_arc.read().unwrap();
+                let south_data = south_arc.read().unwrap();
+                let east_data = east_arc.read().unwrap();
+                let west_data = west_arc.read().unwrap();
+                let up_data = up_arc.read().unwrap();
+                let down_data = down_arc.read().unwrap();
                 let neighbors: render::chunk::NeighborData = (
                     &north_data,
                     &south_data,
@@ -479,8 +455,6 @@ fn upload_meshes(
         return;
     }
 
-    let read_guard = map.read_guard();
-
 
     // if !chunk_queue.finished_meshing.is_empty() {
     //     println!("Currently meshing queue size: {}", chunk_queue.currently_meshing.len());
@@ -514,7 +488,7 @@ fn upload_meshes(
 
         // println!("Coord: {}, count: {}", coord, counter.count);
 
-        let chunk_entity = ChunkMap::get_chunk(&coord, &read_guard).expect("Can't remesh chunk that isn't in memory!").get_entity();
+        let chunk_entity = map.get_chunk(&coord).expect("Can't remesh chunk that isn't in memory!").get_entity();
         // let mut component = q_chunks.get_mut(entity).expect("Invalid entity id");
 
 

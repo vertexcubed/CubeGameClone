@@ -316,7 +316,6 @@ fn on_world_join(
     // force map and read_guard to be dropped before queuing chunk generation
     {
         let map = world.get_chunk_map();
-        let read_guard = map.read_guard();
 
         info!("Loading spawn chunks...");
         let mut i = 0;
@@ -324,7 +323,7 @@ fn on_world_join(
             for z in -rad..rad + 1 {
                 for y in -rad..rad + 1 {
                     let coord = ivec3(x, y, z) + chunk_pos;
-                    if ChunkMap::get_chunk(&coord, &read_guard).is_some() {
+                    if map.get_chunk(&coord).is_some() {
                         continue;
                     }
 
@@ -354,55 +353,52 @@ fn spawn_and_despawn_chunks(
     if old_chunk == new_chunk {
         return;
     }
-    // info!("Processing chunks to spawn/despawn");
+    // player has changed chunks - determine what chunks to load or unload
+
     let world = world.as_mut();
-    
+    let map = world.get_chunk_map_mut();
+
+
     let mut to_generate = VecDeque::new();
     let mut to_despawn = VecDeque::new();
     
-    // immutable world access
-    {
-        // player has changed chunks - determine what chunks to load or unload
-        let read_guard = world.get_chunk_map().read_guard();
 
-        let spawn_distance = 5;
-        let spawn_squared = (spawn_distance * spawn_distance) as f32;
+    let spawn_distance = 5;
+    let spawn_squared = (spawn_distance * spawn_distance) as f32;
 
-        // for all chunks within the radius
-        for x in -spawn_distance..spawn_distance + 1 {
-            for y in -spawn_distance..spawn_distance + 1 {
-                for z in -spawn_distance..spawn_distance + 1 {
-                    let distance = vec3(x as f32, y as f32, z as f32).distance_squared(Vec3::ZERO);
-                    // skip chunks not close enough
-                    if distance > spawn_squared {
-                        continue;
-                    }
-                    let pos = new_chunk + ivec3(x, y, z);
-                    // skip chunks already in the chunk map
-                    if let Some(chunk) = ChunkMap::get_chunk(&pos, &read_guard) {
-                        // println!("Chunk {pos} exists, damn. Is initialized: {}", chunk.is_initialized());
-                        continue;
-                    }
-                    // println!("{pos} is not in chunk map, queuing...");
-                    to_generate.push_back(pos);
+    // for all chunks within the radius
+    for x in -spawn_distance..spawn_distance + 1 {
+        for y in -spawn_distance..spawn_distance + 1 {
+            for z in -spawn_distance..spawn_distance + 1 {
+                let distance = vec3(x as f32, y as f32, z as f32).distance_squared(Vec3::ZERO);
+                // skip chunks not close enough
+                if distance > spawn_squared {
+                    continue;
                 }
+                let pos = new_chunk + ivec3(x, y, z);
+                // skip chunks already in the chunk map
+                if map.get_chunk(&pos).is_some() {
+                    continue;
+                }
+                // println!("{pos} is not in chunk map, queuing...");
+                to_generate.push_back(pos);
             }
         }
-        let despawn_distance = 7.0;
-        let despawn_squared = despawn_distance * despawn_distance;
+    }
+    let despawn_distance = 7.0;
+    let despawn_squared = despawn_distance * despawn_distance;
 
 
 
-        // despawn chunks
-        for (pos, _) in ChunkMap::iter(&read_guard) {
-            let distance = new_chunk.as_vec3().distance_squared(pos.as_vec3());
+    // despawn chunks
+    for (pos, _) in map.iter() {
+        let distance = new_chunk.as_vec3().distance_squared(pos.as_vec3());
 
-            if distance > despawn_squared {
-                // queue despawn
-                to_despawn.push_back(pos.clone());
-            }
-
+        if distance > despawn_squared {
+            // queue despawn
+            to_despawn.push_back(pos.clone());
         }
+
     }
     // mutable world access
     while !to_generate.is_empty() {
@@ -426,7 +422,6 @@ fn on_set_block(
 ) {
 
     let map = world.get_chunk_map();
-    let read_guard = map.read_guard();
 
     let pos = trigger.pos;
     let chunk_pos = chunk::pos_to_chunk_pos(pos);
@@ -459,21 +454,21 @@ fn on_set_block(
     println!("x: {:?}, y: {:?}, z: {:?}", x_axis, y_axis, z_axis);
 
 
-    let chunk = ChunkMap::get_chunk(&chunk_pos, &read_guard).unwrap();
+    let chunk = map.get_chunk(&chunk_pos).unwrap();
     let entity = chunk.get_entity();
     commands.entity(entity).insert(ChunkNeedsMeshing);
 
     // remesh neighboring chunks if necessary
     if let Some(x_axis) = x_axis {
-        let chunk = ChunkMap::get_chunk(&x_axis, &read_guard).unwrap();
+        let chunk = map.get_chunk(&x_axis).unwrap();
         commands.entity(chunk.get_entity()).insert(ChunkNeedsMeshing);
     }
     if let Some(y_axis) = y_axis {
-        let chunk = ChunkMap::get_chunk(&y_axis, &read_guard).unwrap();
+        let chunk = map.get_chunk(&y_axis).unwrap();
         commands.entity(chunk.get_entity()).insert(ChunkNeedsMeshing);
     }
     if let Some(z_axis) = z_axis {
-        let chunk = ChunkMap::get_chunk(&z_axis, &read_guard).unwrap();
+        let chunk = map.get_chunk(&z_axis).unwrap();
         commands.entity(chunk.get_entity()).insert(ChunkNeedsMeshing);
     }
 }
