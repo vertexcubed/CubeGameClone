@@ -1,3 +1,4 @@
+use std::slice::Iter;
 use std::sync::{Arc, RwLock};
 use bevy::log::info_span;
 use crate::core::errors::ChunkError;
@@ -9,7 +10,7 @@ use bitvec::bitvec;
 use bitvec::order::Msb0;
 use bitvec::prelude::BitVec;
 use bitvec::view::BitViewSized;
-
+use crate::math;
 
 /// A data structure that represents a chunk in the world. Stores some information about it tied to
 /// its physical state, like the blocks in the chunk and its state.
@@ -224,6 +225,14 @@ impl ChunkData {
 
         block_at_raw(&self.data, self.id_size, scaled_index)
     }
+    
+    pub fn palette_iter(&self) -> Iter<'_, PaletteEntry> {
+        self.palette.iter()
+    }
+    
+    pub fn palette_len(&self) -> usize {
+        self.palette.len()
+    }
 
     pub fn lookup_palette(&self, index: usize) -> Result<&PaletteEntry, ChunkError> {
         Ok(&self.palette[index])
@@ -420,12 +429,7 @@ fn block_at_raw(data: &BitVec, id_size: usize, scaled_index: usize) -> usize {
     assert!(value.len() <= 32);
 
     // folds the bit array into an integer and returns
-    let out = value.into_iter().fold(0, |acc, b| {
-        let bit: bool = b.as_ref().clone();
-        (acc << 1) + (bit as usize)
-    });
-
-    out
+    math::bslice_to_usize(value)
 }
 
 fn set_raw(data: &mut BitVec, id_size: usize, scaled_index: usize, value: usize) {

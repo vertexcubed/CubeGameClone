@@ -44,8 +44,7 @@ pub fn create_chunk_mesh(
 
     // let span = info_span!("create_chunk_mesh").entered();
 
-    let guard = cache.inner.load();
-    let model_map = guard.as_ref();
+    let model_map = cache.inner.as_ref();
     
     let mut positions = Vec::<[f32; 3]>::with_capacity(ChunkData::BLOCKS_PER_CHUNK);
     let mut uv0s = Vec::<[f32; 2]>::with_capacity(ChunkData::BLOCKS_PER_CHUNK);
@@ -64,10 +63,32 @@ pub fn create_chunk_mesh(
     let mut cull_info = Vec::new();
 
     let mut faces: Vec<(IVec3, &FaceMinimal)> = Vec::with_capacity(1024);
+    
+    let (north, south, east, west, up, down) = neighbors;
 
-    let mut push_time = 0.0;
-    
-    
+    // precompute models for the palettes of this chunk and neighboring chunks.
+    // Reduces number of CPU cache misses and time spent hashing BlockStates 
+    // as indexing a linear data structure is significantly faster. 
+    let mut models: [Vec<Option<&BlockModelMinimal>>; 7] = [
+        Vec::with_capacity(chunk.palette_len()),
+        Vec::with_capacity(north.palette_len()),
+        Vec::with_capacity(south.palette_len()),
+        Vec::with_capacity(east.palette_len()),
+        Vec::with_capacity(west.palette_len()),
+        Vec::with_capacity(up.palette_len()),
+        Vec::with_capacity(down.palette_len()),
+    ];
+    setup_model_cache(&chunk, &mut models[0], &model_map);
+    setup_model_cache(&north, &mut models[1], &model_map);
+    setup_model_cache(&south, &mut models[2], &model_map);
+    setup_model_cache(&east, &mut models[3], &model_map);
+    setup_model_cache(&west, &mut models[4], &model_map);
+    setup_model_cache(&up, &mut models[5], &model_map);
+    setup_model_cache(&down, &mut models[6], &model_map);
+    let after_model_cache = now.elapsed().as_secs_f64() * 1000.;
+
+
+
     // Figures out cull info for non air blocks.
     for i in 0..ChunkData::BLOCKS_PER_CHUNK {
         let id = chunk.block_at_index(i);
@@ -77,16 +98,14 @@ pub fn create_chunk_mesh(
             continue;
         }
         let (x, y, z) = index_to_xyz(i);
-        let before_push = now.elapsed().as_secs_f64();
-        cull_info.push((ivec3(x as i32, y as i32, z as i32), &block_id.block, culled_sides(&chunk, x, y, z, neighbors, &model_map)));
-        let after_push = now.elapsed().as_secs_f64();
-        push_time += (after_push - before_push) * 1000.;
+        // let culled_sides = 0b00111111;
+        cull_info.push((ivec3(x as i32, y as i32, z as i32), &block_id.block, culled_sides(&chunk, x, y, z, neighbors, &models)));
     }
     let after_first_loop = now.elapsed().as_secs_f64() * 1000.;
-    
-    
-    
-    
+
+
+
+
     // grabs faces for non air blocks that shouldn't be culled
     for (pos, block, cull_info) in cull_info {
         let Some(block_model) = model_map.get(block) else {
@@ -135,7 +154,9 @@ pub fn create_chunk_mesh(
         .with_inserted_indices(Indices::U32(indices));
 
     let end = now.elapsed().as_secs_f64() * 1000.0;
-    info!("Took {end} ms to mesh.\nFirst loop took {}, second loop took {}, third loop took {}.\nPush time: {push_time}", after_first_loop, after_second_loop - after_first_loop, after_third_loop - after_second_loop);
+    if end > 10.0 {
+        info!("Took {end} ms to mesh.\nModel cache took {}.First loop took {}, second loop took {}, third loop took {}.", after_model_cache, after_first_loop - after_model_cache, after_second_loop - after_first_loop, after_third_loop - after_second_loop);    
+    }
 
     ret
 }
@@ -148,6 +169,18 @@ fn should_skip(dir: Direction, cull_info: u8) -> bool {
         Direction::West => cull_info & (0b1 << 3) != 0,
         Direction::Up => cull_info & (0b1 << 4) != 0,
         Direction::Down => cull_info & (0b1 << 5) != 0,
+    }
+}
+
+fn setup_model_cache<'a>(
+    chunk: &ChunkData,
+    list: &mut Vec<Option<&'a BlockModelMinimal>>,
+    model_map: &'a HashMap<BlockState, BlockModelMinimal>
+) {
+    for entry in 0..chunk.palette_len() {
+        let state = &chunk.lookup_palette(entry).unwrap().block;
+        let model = model_map.get(&state);
+        list.push(model);
     }
 }
 
@@ -288,79 +321,81 @@ fn culled_sides(
     chunk: &ChunkData,
     x: usize, y: usize, z: usize,
     neighbors: NeighborData,
-    model_map: &HashMap<BlockState, BlockModelMinimal>
+    model_map: &[Vec<Option<&BlockModelMinimal>>; 7]
 ) -> u8 {
     let last = ChunkData::CHUNK_SIZE - 1;
     let (north, south, east, west, up, down) = neighbors;
 
     let (id_north, q_north) = if z == last {
-        (north.block_at(x, y, 0), north)
+        (north.block_at(x, y, 0), 1)
     } else {
-        (chunk.block_at(x, y, z + 1), chunk)
+        (chunk.block_at(x, y, z + 1), 0)
     };
 
     let (id_south, q_south) = if z == 0 {
-        (south.block_at(x, y, last), south)
+        (south.block_at(x, y, last), 2)
     } else {
-        (chunk.block_at(x, y, z - 1), chunk)
+        (chunk.block_at(x, y, z - 1), 0)
     };
 
     let (id_east, q_east) = if x == last {
-        (east.block_at(0, y, z), east)
+        (east.block_at(0, y, z), 3)
     } else {
-        (chunk.block_at(x + 1, y, z), chunk)
+        (chunk.block_at(x + 1, y, z), 0)
     };
 
     let (id_west, q_west) = if x == 0 {
-        (west.block_at(last, y, z), west)
+        (west.block_at(last, y, z), 4)
     } else {
-        (chunk.block_at(x - 1, y, z), chunk)
+        (chunk.block_at(x - 1, y, z), 0)
     };
 
     let (id_up, q_up) = if y == last {
-        (up.block_at(x, 0, z), up)
+        (up.block_at(x, 0, z), 5)
     } else {
-        (chunk.block_at(x, y + 1, z), chunk)
+        (chunk.block_at(x, y + 1, z), 0)
     };
 
     let (id_down, q_down) = if y == 0 {
-        (down.block_at(x, last, z), down)
+        (down.block_at(x, last, z), 6)
     } else {
-        (chunk.block_at(x, y - 1, z), chunk)
+        (chunk.block_at(x, y - 1, z), 0)
     };
+    
+    let m_north = model_map[q_north][id_north];
+    let m_south = model_map[q_south][id_south];
+    let m_east = model_map[q_east][id_east];
+    let m_west = model_map[q_west][id_west];
+    let m_up = model_map[q_up][id_up];
+    let m_down = model_map[q_down][id_down];
 
-    let b_north = &q_north.lookup_palette(id_north).unwrap().block;
-    let b_south = &q_south.lookup_palette(id_south).unwrap().block;
-    let b_east = &q_east.lookup_palette(id_east).unwrap().block;
-    let b_west = &q_west.lookup_palette(id_west).unwrap().block;
-    let b_up = &q_up.lookup_palette(id_up).unwrap().block;
-    let b_down = &q_down.lookup_palette(id_down).unwrap().block;
 
-    let cull_north = match model_map.get(b_north) {
+
+    let cull_north = match m_north {
         Some(model) => model.is_full(Direction::South),
         None => false,
     } as u8;
-    let cull_south = match model_map.get(b_south) {
+    let cull_south = match m_south {
         Some(model) => model.is_full(Direction::North),
         None => false,
     } as u8;
-    let cull_east = match model_map.get(b_east) {
+    let cull_east = match m_east {
         Some(model) => model.is_full(Direction::West),
         None => false,
     } as u8;
-    let cull_west = match model_map.get(b_west) {
+    let cull_west = match m_west {
         Some(model) => model.is_full(Direction::East),
         None => false,
     } as u8;
-    let cull_up = match model_map.get(b_up) {
+    let cull_up = match m_up {
         Some(model) => model.is_full(Direction::Down),
         None => false,
     } as u8;
-    let cull_down = match model_map.get(b_down) {
+    let cull_down = match m_down {
         Some(model) => model.is_full(Direction::Up),
         None => false,
     } as u8;
-
+    
     (cull_north) | (cull_south << 1) | (cull_east << 2) | (cull_west << 3) | (cull_up << 4) | (cull_down << 5)
 }
 

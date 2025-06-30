@@ -12,7 +12,7 @@ use bevy::image::Image;
 use bevy::input::ButtonInput;
 use bevy::pbr::wireframe::{NoWireframe, WireframeConfig};
 use bevy::pbr::MaterialPlugin;
-use bevy::prelude::{BevyError, Gizmos, Handle, KeyCode, Mesh3d, NextState, OnEnter, Query, Res, ResMut, Resource, Transform, Update, Visibility, With, Without};
+use bevy::prelude::{info, BevyError, Gizmos, Handle, KeyCode, Mesh3d, NextState, OnEnter, Query, Res, ResMut, Resource, Transform, Update, Visibility, With, Without};
 use bevy::render::mesh::allocator::MeshAllocatorSettings;
 use bevy::render::render_resource::{Extent3d, TextureDimension};
 use bevy::render::RenderApp;
@@ -126,11 +126,8 @@ fn create_block_data_cache(
         }
 
     }
-    cache.inner.store(Arc::new(map));
-
-    // info!("Finished block data cache :)");
+    cache.inner = Arc::new(map);
     next_load.set(LoadingState::Done);
-
     Ok(())
 }
 

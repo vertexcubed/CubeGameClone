@@ -139,7 +139,7 @@ impl BlockModelMinimal {
             }
         }
     }
-    
+
     pub fn full_raw(&self) -> u8 {
         self.full_sides
     }
@@ -236,7 +236,7 @@ struct Vertex {
 
 #[derive(Resource, Debug, Clone, Default)]
 pub struct MeshDataCache {
-    pub inner: Arc<ArcSwap<HashMap<BlockState, BlockModelMinimal>>>
+    pub inner: Arc<HashMap<BlockState, BlockModelMinimal>>
 }
 
 #[derive(Debug, Default, Clone, Resource)]
