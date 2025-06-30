@@ -19,6 +19,9 @@ thiserror = "2.0.12"
 [profile.dev]
 opt-level = 1
 
+[profile.release]
+debug = true
+
 # Enable a large amount of optimization in the dev profile for dependencies.
 [profile.dev.package."*"]
 opt-level = 3

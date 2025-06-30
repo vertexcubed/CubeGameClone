@@ -392,7 +392,7 @@ fn queue_mesh_creation(
                 }
                 else {
                     // create the mesh
-                    Some(render::chunk::create_chunk_mesh(&data, &cache, Some(neighbors)))
+                    Some(render::chunk::create_chunk_mesh(&data, &cache, neighbors))
                 }
 
             });

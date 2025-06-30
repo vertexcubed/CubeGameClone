@@ -139,6 +139,10 @@ impl BlockModelMinimal {
             }
         }
     }
+    
+    pub fn full_raw(&self) -> u8 {
+        self.full_sides
+    }
 }
 
 #[derive(Debug, Clone)]

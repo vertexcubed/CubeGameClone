@@ -1,13 +1,14 @@
-use crate::render::block::{BlockModelMinimal, MeshDataCache};
+use crate::render::block::{BlockModelMinimal, FaceMinimal, MeshDataCache};
 use crate::render::material::BlockMaterial;
 use crate::world::chunk;
 use crate::world::chunk::ChunkData;
 use bevy::asset::RenderAssetUsages;
 use bevy::log::info_span;
-use bevy::math::vec3;
-use bevy::prelude::Mesh;
+use bevy::math::{vec3, IVec3};
+use bevy::prelude::{info, ivec3, Mesh};
 use bevy::render::mesh::{Indices, PrimitiveTopology};
 use std::collections::HashMap;
+use std::time::Instant;
 use crate::world::block::{BlockState, Direction};
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -38,63 +39,92 @@ pub type NeighborData<'a> = (&'a ChunkData, &'a ChunkData, &'a ChunkData, &'a Ch
 pub fn create_chunk_mesh(
     chunk: &ChunkData,
     cache: &MeshDataCache,
-    neighbors: Option<NeighborData>
+    neighbors: NeighborData
 ) -> Mesh {
 
-    let span = info_span!("create_chunk_mesh").entered();
+    // let span = info_span!("create_chunk_mesh").entered();
 
-    let model_map = cache.inner.load();
+    let guard = cache.inner.load();
+    let model_map = guard.as_ref();
     
-    let mut positions = Vec::<[f32; 3]>::new();
-    let mut uv0s = Vec::<[f32; 2]>::new();
-    let mut normals = Vec::<[f32; 3]>::new();
-    let mut indices = Vec::<u32>::new();
-    let mut texture_ids = Vec::<u32>::new();
-    
+    let mut positions = Vec::<[f32; 3]>::with_capacity(ChunkData::BLOCKS_PER_CHUNK);
+    let mut uv0s = Vec::<[f32; 2]>::with_capacity(ChunkData::BLOCKS_PER_CHUNK);
+    let mut normals = Vec::<[f32; 3]>::with_capacity(ChunkData::BLOCKS_PER_CHUNK);
+    let mut indices = Vec::<u32>::with_capacity(ChunkData::BLOCKS_PER_CHUNK);
+    let mut texture_ids = Vec::<u32>::with_capacity(ChunkData::BLOCKS_PER_CHUNK);
+
 
     //TODO: optimize in the case of single chunks (chunks made up of just one block)
-    
-    let mut indices_offset = 0;
-    
-    for i in 0..ChunkData::BLOCKS_PER_CHUNK {
 
+    let now = Instant::now();
+
+
+    let mut indices_offset = 0;
+
+    let mut cull_info = Vec::new();
+
+    let mut faces: Vec<(IVec3, &FaceMinimal)> = Vec::with_capacity(1024);
+
+    let mut push_time = 0.0;
+    
+    
+    // Figures out cull info for non air blocks.
+    for i in 0..ChunkData::BLOCKS_PER_CHUNK {
         let id = chunk.block_at_index(i);
-        
+
         let block_id = chunk.lookup_palette(id).unwrap();
         if block_id.block.is_air() {
             continue;
         }
-        let block_model = model_map.get(&block_id.block).unwrap();
-
         let (x, y, z) = index_to_xyz(i);
-
-        // iter over each face
+        let before_push = now.elapsed().as_secs_f64();
+        cull_info.push((ivec3(x as i32, y as i32, z as i32), &block_id.block, culled_sides(&chunk, x, y, z, neighbors, &model_map)));
+        let after_push = now.elapsed().as_secs_f64();
+        push_time += (after_push - before_push) * 1000.;
+    }
+    let after_first_loop = now.elapsed().as_secs_f64() * 1000.;
+    
+    
+    
+    
+    // grabs faces for non air blocks that shouldn't be culled
+    for (pos, block, cull_info) in cull_info {
+        let Some(block_model) = model_map.get(block) else {
+            continue;
+        };
         for face in block_model.face_iter() {
             if let Some(dir) = face.get_cull_mode() {
-                // cull face - block adjacent is solid
-                if !should_make_face(dir.into(), &chunk, x, y, z, neighbors, &model_map) {
+                if should_skip(dir, cull_info) {
                     continue;
                 }
             }
-            // else make a new face
-            let (
-                mut face_pos, 
-                mut face_uv0, 
-                mut face_normal, 
-                mut face_index, 
-                mut face_texture_ids
-            ) = face.get_face_data(vec3(x as f32, y as f32, z as f32), indices_offset);
-
-            indices_offset += face_pos.len() as u32;
-
-            positions.append(&mut face_pos);
-            uv0s.append(&mut face_uv0);
-            normals.append(&mut face_normal);
-            indices.append(&mut face_index);
-            texture_ids.append(&mut face_texture_ids);
-
+            faces.push((pos, face));
         }
     }
+    let after_second_loop = now.elapsed().as_secs_f64() * 1000.;
+
+
+
+    // creates face data and sticks it into vecs
+    for (pos, face) in faces {
+        let (
+            mut face_pos,
+            mut face_uv0,
+            mut face_normal,
+            mut face_index,
+            mut face_texture_ids
+        ) = face.get_face_data(pos.as_vec3(), indices_offset);
+
+        indices_offset += face_pos.len() as u32;
+
+        positions.append(&mut face_pos);
+        uv0s.append(&mut face_uv0);
+        normals.append(&mut face_normal);
+        indices.append(&mut face_index);
+        texture_ids.append(&mut face_texture_ids);
+    }
+    let after_third_loop = now.elapsed().as_secs_f64() * 1000.;
+
     
     // creates the chunk mesh
     let ret = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD)
@@ -103,13 +133,30 @@ pub fn create_chunk_mesh(
         .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uv0s)
         .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
         .with_inserted_indices(Indices::U32(indices));
-    
+
+    let end = now.elapsed().as_secs_f64() * 1000.0;
+    info!("Took {end} ms to mesh.\nFirst loop took {}, second loop took {}, third loop took {}.\nPush time: {push_time}", after_first_loop, after_second_loop - after_first_loop, after_third_loop - after_second_loop);
+
     ret
 }
 
+fn should_skip(dir: Direction, cull_info: u8) -> bool {
+    match dir {
+        Direction::North => cull_info & (0b1) != 0,
+        Direction::South => cull_info & (0b1 << 1) != 0,
+        Direction::East => cull_info & (0b1 << 2) != 0,
+        Direction::West => cull_info & (0b1 << 3) != 0,
+        Direction::Up => cull_info & (0b1 << 4) != 0,
+        Direction::Down => cull_info & (0b1 << 5) != 0,
+    }
+}
+
+
+#[deprecated]
 type FaceData = ([[f32; 3]; 4], [[f32; 2]; 4], [[f32; 3]; 4], [u32; 6]);
 
 // outputs vertex specific data for this block and face
+#[deprecated]
 fn face_data(facing: Facing) -> FaceData {
     match facing {
         Facing::North => (
@@ -151,6 +198,7 @@ fn face_data(facing: Facing) -> FaceData {
     }
 }
 
+#[deprecated]
 fn should_make_face(
     facing: Facing,
     chunk: &ChunkData,
@@ -186,7 +234,7 @@ fn should_make_face(
 
     // get the value at new_pos
     let (new_x, new_y, new_z) = new_block(facing, x as isize, y as isize, z as isize);
-    // Check west data.
+
     let (block, queried_chunk) = if neighbors.is_some() {
         let (north, south, east, west, up, down) = neighbors.unwrap();
 
@@ -234,6 +282,91 @@ fn should_make_face(
     
     !model.unwrap().is_full(queried_side)
 }
+
+// TODO: Current bottleneck when it comes to meshing. Speed this up dramatically somehow.
+fn culled_sides(
+    chunk: &ChunkData,
+    x: usize, y: usize, z: usize,
+    neighbors: NeighborData,
+    model_map: &HashMap<BlockState, BlockModelMinimal>
+) -> u8 {
+    let last = ChunkData::CHUNK_SIZE - 1;
+    let (north, south, east, west, up, down) = neighbors;
+
+    let (id_north, q_north) = if z == last {
+        (north.block_at(x, y, 0), north)
+    } else {
+        (chunk.block_at(x, y, z + 1), chunk)
+    };
+
+    let (id_south, q_south) = if z == 0 {
+        (south.block_at(x, y, last), south)
+    } else {
+        (chunk.block_at(x, y, z - 1), chunk)
+    };
+
+    let (id_east, q_east) = if x == last {
+        (east.block_at(0, y, z), east)
+    } else {
+        (chunk.block_at(x + 1, y, z), chunk)
+    };
+
+    let (id_west, q_west) = if x == 0 {
+        (west.block_at(last, y, z), west)
+    } else {
+        (chunk.block_at(x - 1, y, z), chunk)
+    };
+
+    let (id_up, q_up) = if y == last {
+        (up.block_at(x, 0, z), up)
+    } else {
+        (chunk.block_at(x, y + 1, z), chunk)
+    };
+
+    let (id_down, q_down) = if y == 0 {
+        (down.block_at(x, last, z), down)
+    } else {
+        (chunk.block_at(x, y - 1, z), chunk)
+    };
+
+    let b_north = &q_north.lookup_palette(id_north).unwrap().block;
+    let b_south = &q_south.lookup_palette(id_south).unwrap().block;
+    let b_east = &q_east.lookup_palette(id_east).unwrap().block;
+    let b_west = &q_west.lookup_palette(id_west).unwrap().block;
+    let b_up = &q_up.lookup_palette(id_up).unwrap().block;
+    let b_down = &q_down.lookup_palette(id_down).unwrap().block;
+
+    let cull_north = match model_map.get(b_north) {
+        Some(model) => model.is_full(Direction::South),
+        None => false,
+    } as u8;
+    let cull_south = match model_map.get(b_south) {
+        Some(model) => model.is_full(Direction::North),
+        None => false,
+    } as u8;
+    let cull_east = match model_map.get(b_east) {
+        Some(model) => model.is_full(Direction::West),
+        None => false,
+    } as u8;
+    let cull_west = match model_map.get(b_west) {
+        Some(model) => model.is_full(Direction::East),
+        None => false,
+    } as u8;
+    let cull_up = match model_map.get(b_up) {
+        Some(model) => model.is_full(Direction::Down),
+        None => false,
+    } as u8;
+    let cull_down = match model_map.get(b_down) {
+        Some(model) => model.is_full(Direction::Up),
+        None => false,
+    } as u8;
+
+    (cull_north) | (cull_south << 1) | (cull_east << 2) | (cull_west << 3) | (cull_up << 4) | (cull_down << 5)
+}
+
+
+
+
 
 // no guarantee these are in bounds
 fn new_block(facing: Facing, x: isize, y: isize, z: isize) -> (isize, isize, isize) {
