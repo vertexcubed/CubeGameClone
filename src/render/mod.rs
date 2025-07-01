@@ -24,7 +24,7 @@ use std::sync::Arc;
 use bevy::color::palettes::css;
 use bevy::math::Vec3;
 use crate::math::block::BlockPos;
-use crate::world::LookAtData;
+use crate::world::player::LookAtData;
 
 pub mod material;
 pub mod pipeline;

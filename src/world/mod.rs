@@ -11,12 +11,13 @@ use crate::render;
 use crate::render::block::BlockTextures;
 use crate::render::block::MeshDataCache;
 use crate::render::material::BlockMaterial;
+use crate::world::block::BlockWorld;
 use crate::world::camera::{CameraSettings, MainCamera};
 use crate::world::chunk::{Chunk, ChunkData, ChunkNeedsMeshing, PaletteEntry};
-use crate::world::block::BlockWorld;
+use crate::world::machine::MachineWorld;
 use bevy::asset::AssetContainer;
 use bevy::color::palettes::css;
-use bevy::input::mouse::AccumulatedMouseMotion;
+use bevy::input::mouse::{AccumulatedMouseMotion, MouseScrollUnit, MouseWheel};
 use bevy::math::bounding::{Aabb3d, IntersectsVolume};
 use bevy::pbr::wireframe::{NoWireframe, WireframeConfig};
 use bevy::prelude::*;
@@ -27,19 +28,21 @@ use bevy::window::{CursorGrabMode, PrimaryWindow};
 use bitvec::order::Msb0;
 use bitvec::prelude::BitVec;
 use bitvec::view::BitViewSized;
+use block::{BlockState, ChunkMap, Direction};
 use rand::distr::Uniform;
 use rand::Rng;
-use block::{BlockState, ChunkMap, Direction};
 use std::collections::{HashMap, VecDeque};
 use std::f32::consts::PI;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
-use crate::world::machine::MachineWorld;
+use player::LookAtData;
+use crate::world::player::BlockPicker;
 
 pub mod chunk;
 pub mod camera;
 pub mod block;
 pub mod machine;
+pub mod player;
 
 #[derive(Default)]
 pub struct GameWorldPlugin;
@@ -50,8 +53,8 @@ impl Plugin for GameWorldPlugin {
             .init_resource::<CameraSettings>()
             // temp
 
-            .add_systems(Update, (handle_input, look_at_block, place_and_break))
-            .add_systems(PreUpdate, join_world)
+            .add_systems(Update, (handle_input, look_at_block, place_and_break, scroll_pick_block).run_if(in_state(MainGameState::InGame)))
+            .add_systems(PreUpdate, (join_world, setup_block_picker).run_if(in_state(MainGameState::InGame)))
             // .add_systems(Update, track_chunks_around_player)
             .add_systems(OnEnter(MainGameState::InGame), (setup_world, grab_cursor, create_world))
             .add_observer(on_set_block)
@@ -80,6 +83,7 @@ fn setup_world(
         MainCamera,
         Transform::from_xyz(0.0, 2.0, 0.0),
         LookAtData::default(),
+        BlockPicker::default(),
     ));
 
     commands.spawn((
@@ -96,6 +100,36 @@ fn setup_world(
 
 }
 
+fn setup_block_picker(
+    block_reg: Res<RegistryHandle<Block>>,
+    mut picker: Single<&mut BlockPicker>,
+    mut has_run: Local<bool>
+) {
+    if *has_run {
+        return;
+    }
+
+    **picker = BlockPicker::default();
+    for (k, _) in block_reg.iter() {
+        picker.block_order.push(k.clone());
+    }
+
+
+    *has_run = true;
+}
+
+
+fn create_world(
+    mut commands: Commands,
+) {
+
+
+    commands.spawn((
+        BlockWorld::new(),
+        MachineWorld::new(),
+    ))
+        .observe(on_world_join);
+}
 
 fn handle_input(
     mut commands: Commands,
@@ -156,17 +190,56 @@ fn handle_input(
     }
 }
 
+    fn scroll_pick_block(
+    mut target: Single<&mut BlockPicker>,
+    mut mouse_scroll: EventReader<MouseWheel>,
+) {
+    for event in mouse_scroll.read() {
+        match event.unit {
+            MouseScrollUnit::Line => {
+                // info!("Scrolled {}, {}", event.x, event.y);
+                if event.y < 0.0 {
+                    target.index = if target.index == 0 {
+                         target.block_order.len() - 1
+                    }
+                    else {
+                        target.index - 1
+                    };
+                }
+                else if event.y > 0.0 {
+                    target.index = if target.index == target.block_order.len() - 1 {
+                        0
+                    }
+                    else {
+                        target.index + 1
+                    };
+                }
+            },
+            MouseScrollUnit::Pixel => {
+                // info!("Scrolled {}, {}", event.x, event.y);
+                info!("Trackpad scrolling not implemented yet")
+            }
+        }
+    }
+
+
+
+}
+
+
 
 
 
 
 fn place_and_break(
     mut commands: Commands,
-    target: Single<&LookAtData>,
+    player: Single<(&LookAtData, &BlockPicker)>,
     mut world: Single<&mut BlockWorld>,
     mouse_input: Res<ButtonInput<MouseButton>>,
-    block_registry: Res<RegistryHandle<Block>>
+    block_registry: Res<RegistryHandle<Block>>,
 ) -> Result<(), BevyError> {
+    let (target, picker) = player.into_inner();
+    
     let (Some(pos), Some(face)) = (target.look_pos, target.face) else {
         return Ok(());
     };
@@ -178,17 +251,16 @@ fn place_and_break(
         let new_pos = pos.offset(face);
 
         if world.get_block(&new_pos)?.is_air() {
-            world.set_block(&mut commands, &new_pos, BlockState::new("stone", &block_registry)?)?;
+            let id = &picker.block_order[picker.index];
+            world.set_block(&mut commands, &new_pos, BlockState::new(id, &block_registry)?)?;
         }
     }
 
 
     Ok(())
 }
-
-
 fn look_at_block(
-    mut player: Single<(&mut Transform, &mut LookAtData), With<MainCamera>>,
+    player: Single<(&mut Transform, &mut LookAtData), With<MainCamera>>,
     world: Single<&BlockWorld>,
     // kb_input: Res<ButtonInput<KeyCode>>,
     // mut gizmos: Gizmos,
@@ -215,7 +287,7 @@ fn look_at_block(
         };
         // println!("State: {:?}", block);
         let b = block.is_air();
-        let color = if b {
+        let _color = if b {
             css::LIGHT_BLUE
         } else {
             css::LIGHT_GREEN
@@ -243,6 +315,7 @@ fn look_at_block(
         *look_at_data = LookAtData::default();
     }
 }
+
 fn grab_cursor(
     mut window: Single<&mut Window, With<PrimaryWindow>>,
 ) {
@@ -250,31 +323,6 @@ fn grab_cursor(
 
     // also hide the cursor
     window.cursor_options.visible = false;
-}
-
-#[derive(Component, Default)]
-pub struct LookAtData {
-    pub look_pos: Option<IVec3>,
-    pub look_block: Option<BlockState>,
-    pub surface: Option<Vec3>,
-    pub face: Option<Direction>,
-}
-
-#[derive(Component, Default)]
-pub struct MainWorld;
-
-
-fn create_world(
-    mut commands: Commands,
-) {
-
-
-    commands.spawn((
-        MainWorld::default(),
-        BlockWorld::new(),
-        MachineWorld::new(),
-        ))
-        .observe(on_world_join);
 }
 
 
@@ -356,14 +404,14 @@ fn spawn_and_despawn_chunks(
     // player has changed chunks - determine what chunks to load or unload
 
     let world = world.as_mut();
-    let map = world.get_chunk_map_mut();
+    let map = world.get_chunk_map();
 
 
     let mut to_generate = VecDeque::new();
     let mut to_despawn = VecDeque::new();
     
 
-    let spawn_distance = 5;
+    let spawn_distance = 8;
     let spawn_squared = (spawn_distance * spawn_distance) as f32;
 
     // for all chunks within the radius
@@ -377,6 +425,9 @@ fn spawn_and_despawn_chunks(
                 }
                 let pos = new_chunk + ivec3(x, y, z);
                 // skip chunks already in the chunk map
+                if world.is_queued_for_generation(&pos) {
+                    continue;
+                }
                 if map.get_chunk(&pos).is_some() {
                     continue;
                 }
@@ -385,7 +436,7 @@ fn spawn_and_despawn_chunks(
             }
         }
     }
-    let despawn_distance = 7.0;
+    let despawn_distance = 12.0;
     let despawn_squared = despawn_distance * despawn_distance;
 
 
@@ -451,9 +502,6 @@ fn on_set_block(
         None
     };
 
-    println!("x: {:?}, y: {:?}, z: {:?}", x_axis, y_axis, z_axis);
-
-
     let chunk = map.get_chunk(&chunk_pos).unwrap();
     let entity = chunk.get_entity();
     commands.entity(entity).insert(ChunkNeedsMeshing);
@@ -478,7 +526,7 @@ fn on_set_block(
 // =================================================================
 
 
-
+#[deprecated]
 fn make_data(block_reg: &Registry<Block>) -> ChunkData {
     let mut palette = vec![
         PaletteEntry::new(BlockState::new("air", block_reg).unwrap()),
@@ -488,13 +536,13 @@ fn make_data(block_reg: &Registry<Block>) -> ChunkData {
         // PaletteEntry::new("iron_ore"),
     ];
 
-    let id_size = ((palette.len()) as f32).log2().ceil() as usize;
+    let id_size = (palette.len() as f32).log2().ceil() as usize;
 
     let mut vec = BitVec::with_capacity(id_size * 32768);
 
     for y in 0..32 {
-        for x in 0..32 {
-            for z in 0..32 {
+        for _ in 0..32 {
+            for _ in 0..32 {
 
                 let id = if(y == 31) {
                     2
@@ -518,7 +566,7 @@ fn make_data(block_reg: &Registry<Block>) -> ChunkData {
 
 }
 
-
+#[deprecated]
 pub fn make_data_chaos(block_reg: &Registry<Block>) -> ChunkData {
     let mut palette = vec![
         PaletteEntry::new(BlockState::new("air", block_reg).unwrap()),
@@ -536,8 +584,7 @@ pub fn make_data_chaos(block_reg: &Registry<Block>) -> ChunkData {
     let mut vec = BitVec::with_capacity(id_size * 32768);
     let mut rng = rand::rng();
 
-    for i in 0..32768 {
-        let scaled_idx = i * id_size;
+    for _ in 0..32768 {
         // 0-4
         let rand_id = rng.sample(Uniform::new(0, palette.len()).unwrap());
 
@@ -558,10 +605,10 @@ pub fn make_data_chaos(block_reg: &Registry<Block>) -> ChunkData {
     ChunkData::with_data(vec, palette)
 }
 
-
+#[deprecated]
 pub fn make_box(block_reg: &Registry<Block>) -> ChunkData {
 
-    let span = info_span!("make_box").entered();
+    let _span = info_span!("make_box").entered();
 
     let mut palette = vec![
         PaletteEntry::new(BlockState::new("air", block_reg).unwrap()),
@@ -576,7 +623,6 @@ pub fn make_box(block_reg: &Registry<Block>) -> ChunkData {
     let id_size = ((palette.len()) as f32).log2().ceil() as usize;
 
     let mut vec = BitVec::with_capacity(id_size * 32768);
-    let mut rng = rand::rng();
     for x in 0..32 {
         for y in 0..32 {
             for z in 0..32 {
@@ -617,8 +663,11 @@ fn height_map_temp(pos: IVec3, block_reg: &Registry<Block>) -> BlockState {
     if pos.y < -4 {
         BlockState::new("stone", block_reg).unwrap()
     }
-    else if pos.y <= 0 {
+    else if pos.y < 0 {
         BlockState::new("dirt", block_reg).unwrap()
+    }
+    else if pos.y == 0 {
+        BlockState::new("grass_block", block_reg).unwrap()
     }
     else {
         BlockState::new("air", block_reg).unwrap()
@@ -634,6 +683,7 @@ fn temp_gen_function(chunk_pos: IVec3, block_reg: &Registry<Block>) -> ChunkData
         PaletteEntry::new(BlockState::new("air", block_reg).unwrap()),
         PaletteEntry::new(BlockState::new("stone", block_reg).unwrap()),
         PaletteEntry::new(BlockState::new("dirt", block_reg).unwrap()),
+        PaletteEntry::new(BlockState::new("grass_block", block_reg).unwrap()),
     ];
 
     let id_size = ((palette.len()) as f32).log2().ceil() as usize;
@@ -652,6 +702,7 @@ fn temp_gen_function(chunk_pos: IVec3, block_reg: &Registry<Block>) -> ChunkData
                     "air" => 0,
                     "stone" => 1,
                     "dirt" => 2,
+                    "grass_block" => 3,
                     _ => unreachable!(),
                 };
 

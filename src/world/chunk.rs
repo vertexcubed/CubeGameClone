@@ -287,7 +287,6 @@ impl ChunkData {
 
             if !has_to_expand {
                 // no changes since we've set the block to the one block this chunk is entirely
-                println!("No changes, chunk is single");
                 return Ok(block);
             }
 
@@ -311,8 +310,6 @@ impl ChunkData {
         let ret = p.block.clone();
 
 
-        println!("Block to place: {:?}", block);
-        println!("Palette: {:?}", self.palette);
         // check the palette to see if this block already is in it (including free ones!)
         for palette_idx in 0..self.palette.len() {
             let mut p = &mut self.palette[palette_idx];
@@ -320,27 +317,21 @@ impl ChunkData {
             if p.block == block {
                 p.ref_count += 1;
 
-                println!("Found index: {}", palette_idx);
-                println!("Old id: {}", old_block);
 
                 // actually does the bit setting operation
 
-                println!("Old data: {}", &self.data[index * self.id_size..index * self.id_size + self.id_size]);
 
                 set_raw(&mut self.data, self.id_size, index * self.id_size, palette_idx);
 
-                println!("New data: {}", &self.data[index * self.id_size..index * self.id_size + self.id_size]);
 
                 return Ok(ret);
             }
         }
-        println!("Not in palette, adding to palette...");
         // block is not in the palette, add it to the palette.
         let block_id = self.add_palette(PaletteEntry::new(block));
         // increase palette's refcount
         self.palette[block_id].ref_count += 1;
 
-        println!("Palette: {:?}", self.palette);
 
         //update the raw data
         set_raw(&mut self.data, self.id_size, index * self.id_size, block_id);

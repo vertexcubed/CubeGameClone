@@ -21,10 +21,7 @@ use bevy::render::render_resource::WgpuFeatures;
 use bevy::render::settings::{RenderCreation, WgpuSettings};
 use bevy::render::RenderPlugin;
 use bevy::window::PresentMode;
-use bitvec::field::BitField;
-use bitvec::view::BitViewSized;
 use core::CoreGamePlugin;
-use rand::Rng;
 
 fn main() {
 

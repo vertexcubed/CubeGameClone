@@ -1,0 +1,12 @@
+Block(
+    id: "grass_block",
+    hardness: 1,
+    states: [],
+    default_state: {},
+    models: [
+        ModelDef(
+            state: {},
+            model: "block/grass_block"
+        )
+    ]
+)

@@ -36,8 +36,8 @@ pub fn block_raycast(
         start,
         direction,
     };
-    
-    
+
+
     // the step vectors. the signs tell you which way to step
     let step = direction.signum();
 
@@ -90,7 +90,7 @@ pub fn block_raycast(
 
 
         grid_pos[axis] += step[axis];
-        
+
         let is_hit = test_function(&context, start + (max_t[axis] * direction), face, grid_pos.as_block_pos())?;
         if is_hit {
             return Ok(RayResult::Hit(start + (max_t[axis] * direction), face, grid_pos.as_block_pos()))

@@ -7,11 +7,11 @@ BlockModel(
             vertices: [
                 Vertex(
                     pos: (0.0, 0.0, 1.0),
-                    uv: (0.0, 0.0)
+                    uv: (0.0, 1.0)
                 ),
                 Vertex(
                     pos: (1.0, 0.0, 1.0),
-                    uv: (1.0, 0.0)
+                    uv: (1.0, 1.0)
                 ),
                 Vertex(
                     pos: (1.0, 0.5, 1.0),
@@ -32,11 +32,11 @@ BlockModel(
             vertices: [
                 Vertex(
                     pos: (1.0, 0.0, 0.0),
-                    uv: (0.0, 0.0)
+                    uv: (0.0, 1.0)
                 ),
                 Vertex(
                     pos: (0.0, 0.0, 0.0),
-                    uv: (1.0, 0.0)
+                    uv: (1.0, 1.0)
                 ),
                 Vertex(
                     pos: (0.0, 0.5, 0.0),
@@ -57,11 +57,11 @@ BlockModel(
             vertices: [
                 Vertex(
                     pos: (1.0, 0.0, 1.0),
-                    uv: (0.0, 0.0)
+                    uv: (0.0, 1.0)
                 ),
                 Vertex(
                     pos: (1.0, 0.0, 0.0),
-                    uv: (1.0, 0.0)
+                    uv: (1.0, 1.0)
                 ),
                 Vertex(
                     pos: (1.0, 0.5, 0.0),
@@ -82,11 +82,11 @@ BlockModel(
             vertices: [
                 Vertex(
                     pos: (0.0, 0.0, 0.0),
-                    uv: (0.0, 0.0)
+                    uv: (0.0, 1.0)
                 ),
                 Vertex(
                     pos: (0.0, 0.0, 1.0),
-                    uv: (1.0, 0.0)
+                    uv: (1.0, 1.0)
                 ),
                 Vertex(
                     pos: (0.0, 0.5, 1.0),
@@ -108,19 +108,19 @@ BlockModel(
             vertices: [
                 Vertex(
                     pos: (0.0, 0.5, 1.0),
-                    uv: (0.0, 0.0)
+                    uv: (0.0, 1.0)
                 ),
                 Vertex(
                     pos: (1.0, 0.5, 1.0),
-                    uv: (1.0, 0.0)
-                ),
-                Vertex(
-                    pos: (1.0, 0.5, 0.0),
                     uv: (1.0, 1.0)
                 ),
                 Vertex(
+                    pos: (1.0, 0.5, 0.0),
+                    uv: (1.0, 0.0)
+                ),
+                Vertex(
                     pos: (0.0, 0.5, 0.0),
-                    uv: (0.0, 1.0)
+                    uv: (0.0, 0.0)
                 ),
             ],
             normal: (0.0, 1.0, 0.0),
@@ -133,19 +133,19 @@ BlockModel(
             vertices: [
                 Vertex(
                     pos: (0.0, 0.0, 0.0),
-                    uv: (0.0, 0.0)
+                    uv: (0.0, 1.0)
                 ),
                 Vertex(
                     pos: (1.0, 0.0, 0.0),
-                    uv: (1.0, 0.0)
-                ),
-                Vertex(
-                    pos: (1.0, 0.0, 1.0),
                     uv: (1.0, 1.0)
                 ),
                 Vertex(
+                    pos: (1.0, 0.0, 1.0),
+                    uv: (1.0, 0.0)
+                ),
+                Vertex(
                     pos: (0.0, 0.0, 1.0),
-                    uv: (0.0, 1.0)
+                    uv: (0.0, 0.0)
                 ),
             ],
             normal: (0.0, -1.0, 0.0),

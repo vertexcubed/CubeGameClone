@@ -1,10 +1,11 @@
 use crate::math::block::Vec3Ext;
 use crate::world::camera::MainCamera;
-use crate::world::{chunk, LookAtData};
+use crate::world::chunk;
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 use std::collections::VecDeque;
 use std::time::Duration;
+use crate::world::player::{BlockPicker, LookAtData};
 
 #[derive(Default)]
 pub struct GameUiPlugin;
@@ -13,7 +14,7 @@ impl Plugin for GameUiPlugin {
         app
 
             .add_systems(Startup, (build_debug_ui, build_hud))
-            .add_systems(Update, (update_fps_text, update_position, update_look_target))
+            .add_systems(Update, (update_fps_text, update_position, update_look_target, update_block_picker_text))
         ;
     }
 }
@@ -27,6 +28,8 @@ struct Position;
 #[derive(Component)]
 struct LookTarget;
 
+#[derive(Component)]
+struct BlockPickerText;
 
 
 fn build_hud(
@@ -54,6 +57,34 @@ fn build_hud(
                 height: Val::Px(16.),
                 ..default()
             }
+        ));
+    });
+
+
+
+    commands.spawn(
+        Node {
+            width: Val::Percent(100.),
+            height: Val::Percent(100.),
+            flex_direction: FlexDirection::ColumnReverse,
+            justify_content: JustifyContent::FlexStart,
+            align_items: AlignItems::Center,
+            padding: UiRect {
+                left: Val::Percent(5.),
+                right: Val::Percent(5.),
+                top: Val::Percent(5.),
+                bottom: Val::Percent(5.),
+            },
+            ..default()
+        }
+    ).with_children(|parent| {
+        parent.spawn((
+            Text::new(""),
+            TextFont {
+                font_size: 24.0,
+                ..default()
+            },
+            BlockPickerText,
         ));
     });
 
@@ -200,4 +231,18 @@ fn update_look_target(
     *writer.text(look.into_inner(), 0) = format!("Looking at: {block_str} ({b_pos_str} // {surface_str})")
     
     
+}
+
+
+fn update_block_picker_text(
+    picker: Single<&BlockPicker>,
+    q_text: Single<Entity, With<BlockPickerText>>,
+    mut writer: TextUiWriter,
+) {
+    if picker.block_order.len() == 0 {
+        *writer.text(q_text.into_inner(), 0) = String::from("");
+        return;
+    }
+    let text = picker.block_order[picker.index].clone();
+    *writer.text(q_text.into_inner(), 0) = text;
 }

@@ -1,0 +1,12 @@
+BlockModel(
+    parent: Some("block/base/full"),
+
+    textures: {
+        "N": "block/grass_block_side",
+        "S": "block/grass_block_side",
+        "E": "block/grass_block_side",
+        "W": "block/grass_block_side",
+        "U": "block/grass_block_top",
+        "D": "block/dirt"
+    }
+)

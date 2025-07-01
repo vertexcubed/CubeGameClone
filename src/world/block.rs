@@ -14,7 +14,7 @@ use bevy::ecs::system::SystemState;
 use bevy::log::info_span;
 use bevy::math::{ivec3, Vec3};
 use bevy::pbr::MeshMaterial3d;
-use bevy::prelude::{error, info, App, Children, Commands, Component, Entity, EventWriter, Events, First, IVec3, IntoScheduleConfigs, Mesh, Mesh3d, PreUpdate, Query, QueryState, Res, ResMut, Single, Visibility, With};
+use bevy::prelude::{error, info, warn, App, Children, Commands, Component, Entity, EventWriter, Events, First, IVec3, IntoScheduleConfigs, Mesh, Mesh3d, PreUpdate, Query, QueryState, Res, ResMut, Single, Visibility, With};
 use bevy::render::primitives::Aabb;
 use bevy::tasks::futures_lite::future;
 use bevy::tasks::{block_on, AsyncComputeTaskPool, Task};
@@ -91,6 +91,23 @@ impl BlockWorld {
 
     pub fn get_chunk_map(&self) -> &ChunkMap {
         &self.map
+    }
+
+    pub fn is_queued_for_generation(&self, pos: &IVec3) -> bool {
+        self.chunk_queue.currently_generating.contains_key(pos)
+    }
+
+    pub fn is_queued_for_meshing(&self, pos: &IVec3) -> bool {
+        if self.chunk_queue.currently_meshing.contains_key(pos) {
+            true
+        } else {
+            for (p, _) in self.chunk_queue.finished_meshing.iter() {
+                if pos == p {
+                    return true;
+                }
+            }
+            false
+        }
     }
 
     pub fn get_chunk_map_mut(&mut self) -> &mut ChunkMap {
@@ -173,7 +190,7 @@ impl ChunkMap {
 // ===================================
 pub fn add_systems(app: &mut App) {
     app
-        .add_systems(PreUpdate, (process_generate_queue, process_despawn_queue, receive_generated_chunks, insert_chunk_data, queue_mesh_creation).chain())
+        .add_systems(PostUpdate, (process_generate_queue, process_despawn_queue, receive_generated_chunks, insert_chunk_data, queue_mesh_creation).chain())
         .add_systems(PreUpdate, (receive_generated_meshes, upload_meshes))
     ;
 }
@@ -260,11 +277,9 @@ fn receive_generated_chunks(
     // this needs to be in a separate scope so the first mutable reference can be dropped.
     {
         for (coord, task) in chunk_queue.currently_generating.iter_mut() {
-            let task_status = block_on(future::poll_once(task));
-            if task_status.is_none() {
+            let Some(data) = block_on(future::poll_once(task)) else {
                 continue;
-            }
-            let data = task_status.unwrap();
+            };
             finished.push_back((coord.clone(), data));
         }
     }
@@ -332,7 +347,7 @@ fn queue_mesh_creation(
 
         // info!("Meshing chunk {pos}...");
 
-        let chunk = map.get_chunk(&pos).unwrap();
+        let chunk = map.get_chunk(&pos).expect("Leaked chunk entity found - chunk entity exists, but is not present in chunk map!");
 
         let north = map.get_chunk(&(pos + ivec3(0, 0, 1)));
         let south = map.get_chunk(&(pos + ivec3(0, 0, -1)));
@@ -415,11 +430,9 @@ fn receive_generated_meshes(
     {
         for (coord, task) in chunk_queue.currently_meshing.iter_mut() {
 
-            let task_status = block_on(future::poll_once(task));
-            if task_status.is_none() {
+            let Some(mesh) = block_on(future::poll_once(task)) else {
                 continue;
-            }
-            let mesh = task_status.unwrap();
+            };
             finished.push_back((coord.clone(), mesh));
         }
     }
@@ -446,7 +459,7 @@ fn upload_meshes(
     mut meshes: ResMut<Assets<Mesh>>,
     block_textures: Res<BlockTextures>,
 ) {
-    let span = info_span!("upload_meshes").entered();
+    let _span = info_span!("upload_meshes").entered();
 
     let world = world.as_mut();
     let (map, mut chunk_queue) = (&world.map, &mut world.chunk_queue);
@@ -466,16 +479,12 @@ fn upload_meshes(
     let mut hard_process_limit = MIB_PER_FRAME;
     while !chunk_queue.finished_meshing.is_empty() && hard_process_limit > 0 {
 
-        let (coord, mesh) = chunk_queue.finished_meshing.pop_front().unwrap();
+        let (coord, Some(mesh)) = chunk_queue.finished_meshing.pop_front().unwrap() else {
+            // air - we don't need to make a mesh and can just move on
+            continue;
+        };
 
         // info!("Uploading mesh {coord}");
-
-        // air - we don't need to make a mesh and can just move on
-        if mesh.is_none() {
-            continue;
-        }
-
-        let mesh = mesh.unwrap();
 
 
         // println!("Indices: {mesh_size}");
@@ -488,7 +497,11 @@ fn upload_meshes(
 
         // println!("Coord: {}, count: {}", coord, counter.count);
 
-        let chunk_entity = map.get_chunk(&coord).expect("Can't remesh chunk that isn't in memory!").get_entity();
+        let Some(chunk) = map.get_chunk(&coord) else {
+            warn!("Chunk {coord} no longer exists in Chunk Map, discarding mesh...");
+            continue;
+        };
+        let chunk_entity = chunk.get_entity();
         // let mut component = q_chunks.get_mut(entity).expect("Invalid entity id");
 
 

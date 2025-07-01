@@ -42,7 +42,7 @@ pub fn create_chunk_mesh(
     neighbors: NeighborData
 ) -> Mesh {
 
-    // let span = info_span!("create_chunk_mesh").entered();
+    let _span = info_span!("create_chunk_mesh").entered();
 
     let model_map = cache.inner.as_ref();
     
@@ -85,7 +85,7 @@ pub fn create_chunk_mesh(
     setup_model_cache(&west, &mut models[4], &model_map);
     setup_model_cache(&up, &mut models[5], &model_map);
     setup_model_cache(&down, &mut models[6], &model_map);
-    let after_model_cache = now.elapsed().as_secs_f64() * 1000.;
+    let _after_model_cache = now.elapsed().as_secs_f64() * 1000.;
 
 
 
@@ -101,7 +101,7 @@ pub fn create_chunk_mesh(
         // let culled_sides = 0b00111111;
         cull_info.push((ivec3(x as i32, y as i32, z as i32), &block_id.block, culled_sides(&chunk, x, y, z, neighbors, &models)));
     }
-    let after_first_loop = now.elapsed().as_secs_f64() * 1000.;
+    let _after_first_loop = now.elapsed().as_secs_f64() * 1000.;
 
 
 
@@ -120,7 +120,7 @@ pub fn create_chunk_mesh(
             faces.push((pos, face));
         }
     }
-    let after_second_loop = now.elapsed().as_secs_f64() * 1000.;
+    let _after_second_loop = now.elapsed().as_secs_f64() * 1000.;
 
 
 
@@ -142,7 +142,7 @@ pub fn create_chunk_mesh(
         indices.append(&mut face_index);
         texture_ids.append(&mut face_texture_ids);
     }
-    let after_third_loop = now.elapsed().as_secs_f64() * 1000.;
+    let _after_third_loop = now.elapsed().as_secs_f64() * 1000.;
 
     
     // creates the chunk mesh
@@ -155,7 +155,7 @@ pub fn create_chunk_mesh(
 
     let end = now.elapsed().as_secs_f64() * 1000.0;
     if end > 10.0 {
-        info!("Took {end} ms to mesh.\nModel cache took {}.First loop took {}, second loop took {}, third loop took {}.", after_model_cache, after_first_loop - after_model_cache, after_second_loop - after_first_loop, after_third_loop - after_second_loop);    
+        // info!("Took {end} ms to mesh.\nModel cache took {}.First loop took {}, second loop took {}, third loop took {}.", after_model_cache, after_first_loop - after_model_cache, after_second_loop - after_first_loop, after_third_loop - after_second_loop);    
     }
 
     ret
@@ -185,7 +185,7 @@ fn setup_model_cache<'a>(
 }
 
 
-#[deprecated]
+
 type FaceData = ([[f32; 3]; 4], [[f32; 2]; 4], [[f32; 3]; 4], [u32; 6]);
 
 // outputs vertex specific data for this block and face
@@ -404,6 +404,7 @@ fn culled_sides(
 
 
 // no guarantee these are in bounds
+#[deprecated]
 fn new_block(facing: Facing, x: isize, y: isize, z: isize) -> (isize, isize, isize) {
     match facing {
         Facing::North => (x, y, z + 1),
