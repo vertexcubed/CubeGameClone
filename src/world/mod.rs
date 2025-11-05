@@ -526,136 +526,135 @@ fn on_set_block(
 // =================================================================
 
 
-#[deprecated]
-fn make_data(block_reg: &Registry<Block>) -> ChunkData {
-    let mut palette = vec![
-        PaletteEntry::new(BlockState::new("air", block_reg).unwrap()),
-        PaletteEntry::new(BlockState::new("stone", block_reg).unwrap()),
-        PaletteEntry::new(BlockState::new("dirt", block_reg).unwrap()),
-        // PaletteEntry::new("diamond_ore"),
-        // PaletteEntry::new("iron_ore"),
-    ];
+// #[deprecated]
+// fn make_data(block_reg: &Registry<Block>) -> ChunkData {
+//     let mut palette = vec![
+//         PaletteEntry::new(BlockState::new("air", block_reg).unwrap()),
+//         PaletteEntry::new(BlockState::new("stone", block_reg).unwrap()),
+//         PaletteEntry::new(BlockState::new("dirt", block_reg).unwrap()),
+//         // PaletteEntry::new("diamond_ore"),
+//         // PaletteEntry::new("iron_ore"),
+//     ];
+// 
+//     let id_size = (palette.len() as f32).log2().ceil() as usize;
+// 
+//     let mut vec = BitVec::with_capacity(id_size * 32768);
+// 
+//     for y in 0..32 {
+//         for _ in 0..32 {
+//             for _ in 0..32 {
+// 
+//                 let id = if(y == 31) {
+//                     2
+//                 } else {
+//                     1
+//                 };
+// 
+//                 palette[id].increment_ref_count();
+// 
+//                 let arr = id.into_bitarray::<Msb0>();
+//                 // println!("Bitarray: {}", arr);
+// 
+//                 let slice = &arr[size_of::<usize>() * 8 - id_size..size_of::<usize>() * 8];
+// 
+//                 vec.append(&mut slice.to_bitvec())
+//             }
+//         }
+//     }
+// 
+//     ChunkData::with_data(vec, palette)
+// }
 
-    let id_size = (palette.len() as f32).log2().ceil() as usize;
+// #[deprecated]
+// pub fn make_data_chaos(block_reg: &Registry<Block>) -> ChunkData {
+//     let mut palette = vec![
+//         PaletteEntry::new(BlockState::new("air", block_reg).unwrap()),
+//         PaletteEntry::new(BlockState::new("stone", block_reg).unwrap()),
+//         PaletteEntry::new(BlockState::new("dirt", block_reg).unwrap()),
+//         PaletteEntry::new(BlockState::new("oak_planks", block_reg).unwrap()),
+//         // PaletteEntry::new("diamond_ore"),
+//         // PaletteEntry::new("iron_ore"),
+//     ];
+// 
+//     // calcualtes the closest power of two id size for the palette.
+//     let id_size = ((palette.len()) as f32).log2().ceil() as usize;
+// 
+// 
+//     let mut vec = BitVec::with_capacity(id_size * 32768);
+//     let mut rng = rand::rng();
+// 
+//     for _ in 0..32768 {
+//         // 0-4
+//         let rand_id = rng.sample(Uniform::new(0, palette.len()).unwrap());
+// 
+//         palette[rand_id].increment_ref_count();
+//         let arr = rand_id.into_bitarray::<Msb0>();
+//         // println!("Bitarray: {}", arr);
+// 
+//         let slice = &arr[size_of::<usize>() * 8 - id_size..size_of::<usize>() * 8];
+//         // println!("Slice: {}", slice);
+//         // println!("Generated num: {}", rand_id);
+// 
+//         vec.append(&mut slice.to_bitvec());
+//     }
+// 
+//     // println!("{:?}", vec);
+// 
+// 
+//     ChunkData::with_data(vec, palette)
+// }
 
-    let mut vec = BitVec::with_capacity(id_size * 32768);
-
-    for y in 0..32 {
-        for _ in 0..32 {
-            for _ in 0..32 {
-
-                let id = if(y == 31) {
-                    2
-                } else {
-                    1
-                };
-
-                palette[id].increment_ref_count();
-
-                let arr = id.into_bitarray::<Msb0>();
-                // println!("Bitarray: {}", arr);
-
-                let slice = &arr[size_of::<usize>() * 8 - id_size..size_of::<usize>() * 8];
-
-                vec.append(&mut slice.to_bitvec())
-            }
-        }
-    }
-
-    ChunkData::with_data(vec, palette)
-
-}
-
-#[deprecated]
-pub fn make_data_chaos(block_reg: &Registry<Block>) -> ChunkData {
-    let mut palette = vec![
-        PaletteEntry::new(BlockState::new("air", block_reg).unwrap()),
-        PaletteEntry::new(BlockState::new("stone", block_reg).unwrap()),
-        PaletteEntry::new(BlockState::new("dirt", block_reg).unwrap()),
-        PaletteEntry::new(BlockState::new("oak_planks", block_reg).unwrap()),
-        // PaletteEntry::new("diamond_ore"),
-        // PaletteEntry::new("iron_ore"),
-    ];
-
-    // calcualtes the closest power of two id size for the palette.
-    let id_size = ((palette.len()) as f32).log2().ceil() as usize;
-
-
-    let mut vec = BitVec::with_capacity(id_size * 32768);
-    let mut rng = rand::rng();
-
-    for _ in 0..32768 {
-        // 0-4
-        let rand_id = rng.sample(Uniform::new(0, palette.len()).unwrap());
-
-        palette[rand_id].increment_ref_count();
-        let arr = rand_id.into_bitarray::<Msb0>();
-        // println!("Bitarray: {}", arr);
-
-        let slice = &arr[size_of::<usize>() * 8 - id_size..size_of::<usize>() * 8];
-        // println!("Slice: {}", slice);
-        // println!("Generated num: {}", rand_id);
-
-        vec.append(&mut slice.to_bitvec());
-    }
-
-    // println!("{:?}", vec);
-
-
-    ChunkData::with_data(vec, palette)
-}
-
-#[deprecated]
-pub fn make_box(block_reg: &Registry<Block>) -> ChunkData {
-
-    let _span = info_span!("make_box").entered();
-
-    let mut palette = vec![
-        PaletteEntry::new(BlockState::new("air", block_reg).unwrap()),
-        PaletteEntry::new(BlockState::new("stone", block_reg).unwrap()),
-        PaletteEntry::new(BlockState::new("dirt", block_reg).unwrap()),
-        PaletteEntry::new(BlockState::new("oak_planks", block_reg).unwrap()),
-        // PaletteEntry::new("diamond_ore"),
-        // PaletteEntry::new("iron_ore"),
-    ];
-
-
-    let id_size = ((palette.len()) as f32).log2().ceil() as usize;
-
-    let mut vec = BitVec::with_capacity(id_size * 32768);
-    for x in 0..32 {
-        for y in 0..32 {
-            for z in 0..32 {
-                let id = if 12 <= x && x <= 19 && 12 <= y && y <= 19 {
-                    if z % 2 == 0 {
-                        2
-                    }
-                    else {
-                        0
-                    }
-                }
-                else {
-                    0
-                };
-
-                palette[id].increment_ref_count();
-
-                let arr = id.into_bitarray::<Msb0>();
-                // println!("Bitarray: {}", arr);
-
-                let slice = &arr[size_of::<usize>() * 8 - id_size..size_of::<usize>() * 8];
-                // println!("Slice: {}", slice);
-                // println!("Generated num: {}", rand_id);
-
-                vec.append(&mut slice.to_bitvec());
-            }
-        }
-    }
-
-
-    ChunkData::with_data(vec, palette)
-
-}
+// #[deprecated]
+// pub fn make_box(block_reg: &Registry<Block>) -> ChunkData {
+// 
+//     let _span = info_span!("make_box").entered();
+// 
+//     let mut palette = vec![
+//         PaletteEntry::new(BlockState::new("air", block_reg).unwrap()),
+//         PaletteEntry::new(BlockState::new("stone", block_reg).unwrap()),
+//         PaletteEntry::new(BlockState::new("dirt", block_reg).unwrap()),
+//         PaletteEntry::new(BlockState::new("oak_planks", block_reg).unwrap()),
+//         // PaletteEntry::new("diamond_ore"),
+//         // PaletteEntry::new("iron_ore"),
+//     ];
+// 
+// 
+//     let id_size = ((palette.len()) as f32).log2().ceil() as usize;
+// 
+//     let mut vec = BitVec::with_capacity(id_size * 32768);
+//     for x in 0..32 {
+//         for y in 0..32 {
+//             for z in 0..32 {
+//                 let id = if 12 <= x && x <= 19 && 12 <= y && y <= 19 {
+//                     if z % 2 == 0 {
+//                         2
+//                     }
+//                     else {
+//                         0
+//                     }
+//                 }
+//                 else {
+//                     0
+//                 };
+// 
+//                 palette[id].increment_ref_count();
+// 
+//                 let arr = id.into_bitarray::<Msb0>();
+//                 // println!("Bitarray: {}", arr);
+// 
+//                 let slice = &arr[size_of::<usize>() * 8 - id_size..size_of::<usize>() * 8];
+//                 // println!("Slice: {}", slice);
+//                 // println!("Generated num: {}", rand_id);
+// 
+//                 vec.append(&mut slice.to_bitvec());
+//             }
+//         }
+//     }
+// 
+// 
+//     ChunkData::with_data(vec, palette)
+// 
+// }
 
 
 
@@ -685,11 +684,9 @@ fn temp_gen_function(chunk_pos: IVec3, block_reg: &Registry<Block>) -> ChunkData
         PaletteEntry::new(BlockState::new("dirt", block_reg).unwrap()),
         PaletteEntry::new(BlockState::new("grass_block", block_reg).unwrap()),
     ];
-
-    let id_size = ((palette.len()) as f32).log2().ceil() as usize;
-
-    let mut vec = BitVec::with_capacity(id_size * ChunkData::BLOCKS_PER_CHUNK);
-
+    
+    let mut vec = Vec::with_capacity(ChunkData::BLOCKS_PER_CHUNK);
+    
     // Data is stored Z -> X -> Y, so we iterate over all z first then all x then all y.
     for y in 0..ChunkData::CHUNK_SIZE {
         for x in 0..ChunkData::CHUNK_SIZE {
@@ -713,13 +710,8 @@ fn temp_gen_function(chunk_pos: IVec3, block_reg: &Registry<Block>) -> ChunkData
                 // if block_pos.y > 0 && id == 2 {
                 //     println!("Why is this dirt? {}, local: {}", block_pos, ivec3(x as i32, y as i32, z as i32));
                 // }
-
-
-
-                let arr = id.into_bitarray::<Msb0>();
-                let slice = &arr[size_of::<usize>() * 8 - id_size..size_of::<usize>() * 8];
-
-                vec.append(&mut slice.to_bitvec());
+                
+                vec.push(id as u8);
             }
         }
     }

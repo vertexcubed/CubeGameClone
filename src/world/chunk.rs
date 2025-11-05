@@ -134,19 +134,17 @@ pub enum ChunkGenerationStatus {
 
 // Representation of chunks in memory
 // A chunk is a 32x32x32 region of the world which contains blocks and blockstates.
-// In the future, they will also contain a "palette" for the different types of blocks in the world
-// For now we'll just do a byte array with the data
 #[derive(Debug, Clone)]
 pub struct ChunkData {
-    // number of bits per block.
-    pub id_size: usize,
-    // for now we'll do a vector of strings - later this will be a better id form
     palette: Vec<PaletteEntry>,
     // vec is heap allocated so this is fine
-    pub data: BitVec,
+    // Important: when 2 bytes are used per block, data is stored Little Endian! This means the first byte is the LSB and the second byte is the MSB
+    pub data: Vec<u8>,
 
     // if this is some: chunk is just one block. Can be air.
     is_single: bool,
+    // if true, blocks use two bytes per id rather than one. only in the case where > 256 different blocks in a chunk
+    double_bytes: bool
 }
 
 
@@ -154,24 +152,29 @@ pub struct ChunkData {
 
 impl ChunkData {
 
-
     // how many bits per ID. This can be 1 bit, 4 bits, one byte, etc. It depends on the size of the palette.
     pub const CHUNK_SIZE: usize = 32;
     pub const BLOCKS_PER_CHUNK: usize = Self::CHUNK_SIZE.pow(3);
 
+    pub const DOUBLE_BLOCKS_PER_CHUNK: usize = Self::BLOCKS_PER_CHUNK * 2;
+
     // generally do not create this yourself
-    pub fn with_data(data: BitVec, palette: Vec<PaletteEntry>) -> Self {
+    pub fn with_data(data: Vec<u8>, palette: Vec<PaletteEntry>) -> Self {
 
         // calcualtes the closest power of two id size for the palette.
-        let id_size = ((palette.len()) as f32).log2().ceil() as usize;
-        if data.len() / id_size != Self::BLOCKS_PER_CHUNK {
-            panic!("Bit data uses {} bits per block, but palette requires {} bits per block!", data.len() as f32 / Self::BLOCKS_PER_CHUNK as f32, id_size)
+        let double_bytes = palette.len() > 256;
+        match (data.len(), double_bytes) {
+            (Self::BLOCKS_PER_CHUNK, false) | (Self::DOUBLE_BLOCKS_PER_CHUNK, true) => {},
+            _ => {
+                let len = if double_bytes { Self::DOUBLE_BLOCKS_PER_CHUNK } else { Self::BLOCKS_PER_CHUNK };
+                panic!("Invalid size of data. Must be {len} bytes long!")
+            }
         }
 
         ChunkData {
-            id_size,
             palette,
             data,
+            double_bytes,
             is_single: false,
         }
     }
@@ -182,8 +185,8 @@ impl ChunkData {
         ];
 
         ChunkData {
-            id_size: 1,
-            data: BitVec::new(),
+            data: Vec::new(),
+            double_bytes: false,
             palette,
             is_single: true,
         }
@@ -214,16 +217,18 @@ impl ChunkData {
     }
 
     pub fn block_at_index(&self, index: usize) -> usize {
-        // now we need to multiply the index by the size of one ID.
-        // This will point to the first bit of our id, then we read the next ID_SIZE bits.
-        let scaled_index = index * self.id_size;
-
-        // if single we just return either 1 (first palette id) or 0 if it's empty (air).
+        // if single we just return 0
         if self.is_single {
-            return self.palette.len();
-        };
+            return 0
+        }
 
-        block_at_raw(&self.data, self.id_size, scaled_index)
+        if self.double_bytes {
+            let scaled_index = index * 2;
+            ((self.data[scaled_index + 1] as usize) << 8) | (self.data[scaled_index] as usize)
+        }
+        else {
+            self.data[index] as usize
+        }
     }
     
     pub fn palette_iter(&self) -> Iter<'_, PaletteEntry> {
@@ -252,9 +257,8 @@ impl ChunkData {
             return i;
         }
         // no free palettes, add a new one.
-        let max_palettes = 2_usize.pow(self.id_size as u32);
         // palettes are full. Resize the data.
-        if (self.palette.len()) == max_palettes {
+        if (self.palette.len()) == 256 {
             self.grow_data();
         }
         // push palette at the end.
@@ -279,29 +283,27 @@ impl ChunkData {
         }
 
 
-
-
-        if self.is_single {
-            // single block? not anymore!
-            let has_to_expand = self.palette[0].block != block;
-
-            if !has_to_expand {
-                // no changes since we've set the block to the one block this chunk is entirely
-                return Ok(block);
-            }
-
-            // need to make data now - since we're setting block lol.
-            self.is_single = false;
-            // fill with either 0 (air) or 1 (first palette entry)
-            self.data = bitvec![self.palette.len(); Self::BLOCKS_PER_CHUNK];
-            self.palette[0].ref_count = Self::BLOCKS_PER_CHUNK as u16;
-        }
-
-
         let old_block = self.block_at(x, y, z);
         let index = xyz_to_index(x, y, z);
 
-        // if old block is not air, we need to decrease refcount.
+        // if we're setting the block to the same block, return old and do nothing
+        if self.palette[old_block].block == block {
+            return Ok(block);
+        }
+        
+        // if single block chunk, now we need to init data and expand
+        if self.is_single {
+
+            // need to make data now - since we're setting block lol.
+            self.is_single = false;
+            // init data to a vec of 0s
+            self.data = vec![0; Self::CHUNK_SIZE];
+            // set refcount to 32768
+            self.palette[0].ref_count = Self::BLOCKS_PER_CHUNK as u16;
+        }
+        
+
+        //Grab the old block and decrease the refcount.
         let mut p = &mut self.palette[old_block];
         if p.is_free() {
             panic!("Invalid palette data: palette {:?} is free, but exists in data", p);
@@ -313,17 +315,10 @@ impl ChunkData {
         // check the palette to see if this block already is in it (including free ones!)
         for palette_idx in 0..self.palette.len() {
             let mut p = &mut self.palette[palette_idx];
-            // block is already in the palette. TODO: update for blockstates.
+            // block is already in the palette, so just increase the refcount and set the data.
             if p.block == block {
                 p.ref_count += 1;
-
-
-                // actually does the bit setting operation
-
-
-                set_raw(&mut self.data, self.id_size, index * self.id_size, palette_idx);
-
-
+                self.set_raw(index, palette_idx);
                 return Ok(ret);
             }
         }
@@ -332,42 +327,54 @@ impl ChunkData {
         // increase palette's refcount
         self.palette[block_id].ref_count += 1;
 
-
         //update the raw data
-        set_raw(&mut self.data, self.id_size, index * self.id_size, block_id);
+        self.set_raw(index, block_id);
 
         //return old block.
         Ok(ret)
 
     }
+    
+    pub fn set_raw(&mut self, index: usize, block_id: usize) {
+        if self.is_single {
+            panic!("Cannot set raw on single chunks!")
+        }
+        if self.double_bytes {
+            let lsb = block_id as u8;
+            let msb = (block_id >> 8) as u8;
+            let scaled_index = index * 2;
+            self.data[scaled_index] = lsb;
+            self.data[scaled_index + 1] = msb;
+        }
+        else {
+            self.data[index] = block_id as u8
+        }
+    }
 
 
-    // grows the internal data storage, realigning all the bit data
+    // grows the data from 1 byte per block to 2 bytes per block. Panics if data is already 2 bytes per block
     fn grow_data(&mut self) {
-        let old_size = self.id_size;
-        // we always double the bit size.
-        let new_size = old_size * 2;
-
-        // make a new bitvec with our expected size.
-        let mut new_vec = BitVec::with_capacity(new_size * Self::BLOCKS_PER_CHUNK);
+        if self.double_bytes {
+            panic!("Cannot grow chunk data that is already double byte!")
+        }
+        let mut new_vec = Vec::with_capacity(Self::DOUBLE_BLOCKS_PER_CHUNK);
         for i in 0..Self::BLOCKS_PER_CHUNK {
-
-            // allocate new space required
-            for _ in 0..(new_size - old_size) {
-                new_vec.push(false);
-            }
-
-            // copy old data.
-            new_vec.extend_from_bitslice(&self.data[i * old_size..i * old_size + old_size]);
+            // LSB
+            new_vec.push(self.data[i]);
+            // MSB
+            new_vec.push(0);
         }
         self.data = new_vec;
-        self.id_size = new_size;
+        self.double_bytes = true;
     }
 
 
     // attempts to shrink data. Panics if shrinking would fail.
     fn shrink_data(&mut self) {
-
+        if !self.double_bytes {
+            panic!("Cannot shrink chunk data that is only single byte!")
+        }
+        todo!("Shrinking not yet Implemented")
     }
 
 
@@ -414,23 +421,23 @@ impl PaletteEntry {
     }
 }
 
-fn block_at_raw(data: &BitVec, id_size: usize, scaled_index: usize) -> usize {
-    let value = &data[scaled_index..scaled_index + id_size];
-    // if for some god forsaken reason the length of this data is somehow longer than 32, crash and burn
-    assert!(value.len() <= 32);
+// fn block_at_raw(data: &BitVec, id_size: usize, scaled_index: usize) -> usize {
+//     let value = &data[scaled_index..scaled_index + id_size];
+//     // if for some god forsaken reason the length of this data is somehow longer than 32, crash and burn
+//     assert!(value.len() <= 32);
+//
+//     // folds the bit array into an integer and returns
+//     math::bslice_to_usize(value)
+// }
 
-    // folds the bit array into an integer and returns
-    math::bslice_to_usize(value)
-}
-
-fn set_raw(data: &mut BitVec, id_size: usize, scaled_index: usize, value: usize) {
-
-    let arr = value.into_bitarray::<Msb0>();
-    let slice = &arr[size_of::<usize>() * 8 - id_size..size_of::<usize>() * 8];
-    for i in 0..id_size {
-        data.set(scaled_index + i, slice[i]);
-    }
-}
+// fn set_raw(data: &mut BitVec, id_size: usize, scaled_index: usize, value: usize) {
+// 
+//     let arr = value.into_bitarray::<Msb0>();
+//     let slice = &arr[size_of::<usize>() * 8 - id_size..size_of::<usize>() * 8];
+//     for i in 0..id_size {
+//         data.set(scaled_index + i, slice[i]);
+//     }
+// }
 
 fn xyz_to_index(x: usize, y: usize, z: usize) -> usize {
     // reverse: i = (depth * width * y) + (depth * x) + z

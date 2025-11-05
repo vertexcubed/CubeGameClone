@@ -7,7 +7,7 @@ use crate::render;
 use crate::render::block::BlockTextures;
 use crate::render::block::MeshDataCache;
 use crate::world::chunk::{Chunk, ChunkData, ChunkMarker, ChunkMeshMarker, ChunkNeedsMeshing};
-use crate::world::{chunk, make_box, temp_gen_function};
+use crate::world::{chunk, temp_gen_function};
 use bevy::app::PostUpdate;
 use bevy::asset::Assets;
 use bevy::ecs::system::SystemState;
