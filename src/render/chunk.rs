@@ -63,8 +63,26 @@ pub fn create_chunk_mesh(
     let mut cull_info = Vec::new();
 
     let mut faces: Vec<(IVec3, &FaceMinimal)> = Vec::with_capacity(1024);
-    
+
+    // let (north, south, east, west, up, down) = (neighbors.0.clone(), neighbors.1.clone(), neighbors.2.clone(), neighbors.3.clone(), neighbors.4.clone(), neighbors.5.clone());
     let (north, south, east, west, up, down) = neighbors;
+
+    let _model_cache = info_span!("model_cache").entered();
+
+
+    // let _test_block_lookups = info_span!("test_block_lookups").entered();
+    // let mut something = 0;
+    // for i in 0..ChunkData::BLOCKS_PER_CHUNK {
+    //     for _ in 0..6 {
+    //         let id = chunk.block_at_index(i);
+    //         something += id;
+    //     }
+    // }
+    // drop(_test_block_lookups);
+    // // prevent all this from being otpimized out
+    // if something > 32768 {
+    //     info!("Something")
+    // }
 
     // precompute models for the palettes of this chunk and neighboring chunks.
     // Reduces number of CPU cache misses and time spent hashing BlockStates 
@@ -87,8 +105,9 @@ pub fn create_chunk_mesh(
     setup_model_cache(&down, &mut models[6], &model_map);
     let _after_model_cache = now.elapsed().as_secs_f64() * 1000.;
 
+    drop(_model_cache);
 
-
+    let _cull_info = info_span!("cull_info").entered();
     // Figures out cull info for non air blocks.
     for i in 0..ChunkData::BLOCKS_PER_CHUNK {
         let id = chunk.block_at_index(i);
@@ -103,9 +122,9 @@ pub fn create_chunk_mesh(
     }
     let _after_first_loop = now.elapsed().as_secs_f64() * 1000.;
 
+    drop(_cull_info);
 
-
-
+    let _grab_faces = info_span!("grab_faces").entered();
     // grabs faces for non air blocks that shouldn't be culled
     for (pos, block, cull_info) in cull_info {
         let Some(block_model) = model_map.get(block) else {
@@ -122,8 +141,9 @@ pub fn create_chunk_mesh(
     }
     let _after_second_loop = now.elapsed().as_secs_f64() * 1000.;
 
+    drop(_grab_faces);
 
-
+    let _make_face_data = info_span!("make_face_data").entered();
     // creates face data and sticks it into vecs
     for (pos, face) in faces {
         let (
@@ -144,6 +164,7 @@ pub fn create_chunk_mesh(
     }
     let _after_third_loop = now.elapsed().as_secs_f64() * 1000.;
 
+    drop(_make_face_data);
     
     // creates the chunk mesh
     let ret = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD)
@@ -362,12 +383,12 @@ fn culled_sides(
         (chunk.block_at(x, y - 1, z), 0)
     };
     
-    let m_north = model_map[q_north][id_north];
-    let m_south = model_map[q_south][id_south];
-    let m_east = model_map[q_east][id_east];
-    let m_west = model_map[q_west][id_west];
-    let m_up = model_map[q_up][id_up];
-    let m_down = model_map[q_down][id_down];
+    let m_north = &model_map[q_north][id_north];
+    let m_south = &model_map[q_south][id_south];
+    let m_east = &model_map[q_east][id_east];
+    let m_west = &model_map[q_west][id_west];
+    let m_up = &model_map[q_up][id_up];
+    let m_down = &model_map[q_down][id_down];
 
 
 

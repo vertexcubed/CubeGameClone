@@ -1,4 +1,5 @@
 pub mod block;
+mod machine;
 
 use crate::asset::block::BlockAsset;
 use crate::core::errors::RegistryError;
