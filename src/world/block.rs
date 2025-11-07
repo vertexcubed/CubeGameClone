@@ -7,7 +7,7 @@ use crate::render;
 use crate::render::block::BlockTextures;
 use crate::render::block::MeshDataCache;
 use crate::world::chunk::{Chunk, ChunkData, ChunkMarker, ChunkMeshMarker, ChunkNeedsMeshing};
-use crate::world::{chunk, temp_gen_function};
+use crate::world::{chunk, sin_gen_function, temp_gen_function};
 use bevy::app::PostUpdate;
 use bevy::asset::Assets;
 use bevy::ecs::system::SystemState;
@@ -24,6 +24,7 @@ use std::rc::Rc;
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use serde::{Deserialize, Serialize};
 use crate::core::errors::BlockStateError::InvalidId;
+use crate::world::generation::{SineHeightMap, WorldGenerator};
 
 /// A component that represents a world that can be read/written from. Stores the actual Chunk map,
 /// along with information about the world status (i.e. chunk generation status)
@@ -102,7 +103,7 @@ impl BlockWorld {
             true
         } else {
             for (p, _) in self.chunk_queue.finished_meshing.iter() {
-                if pos == p {
+                if *pos == *p {
                     return true;
                 }
             }
@@ -196,13 +197,17 @@ pub fn add_systems(app: &mut App) {
 }
 
 fn process_generate_queue(
-    mut world: Single<&mut BlockWorld>,
+    mut single: Single<(&mut BlockWorld, &mut WorldGenerator<SineHeightMap>)>,
     mut commands: Commands,
     block_reg: Res<RegistryHandle<Block>>
 ) {
-    let world = world.as_mut();
+    let mut single = single.into_inner();
+    //rust rover not showing me types so gonna specify here
+    let (world, generator): (&mut BlockWorld, &mut WorldGenerator<SineHeightMap>) = (single.0.as_mut(), single.1.as_mut());
     let (map, chunk_queue) = (&mut world.map, &mut world.chunk_queue);
-
+    
+    
+    
     if chunk_queue.to_generate.is_empty() {
         return;
     }
@@ -230,9 +235,13 @@ fn process_generate_queue(
 
         let reg = block_reg.clone();
 
+        let height_map = generator.borrow_height_map();
+        
+        
         let task = AsyncComputeTaskPool::get().spawn(async move {
             // make_box(reg.as_ref())
-            temp_gen_function(pos, reg.as_ref())
+            // temp_gen_function(pos, reg.as_ref())
+            sin_gen_function(pos, reg.as_ref(), height_map)
         });
 
         chunk_queue.currently_generating.insert(pos, task);

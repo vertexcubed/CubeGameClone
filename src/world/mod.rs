@@ -36,6 +36,7 @@ use std::f32::consts::PI;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 use player::LookAtData;
+use crate::world::generation::{HeightMapProvider, SineHeightMap, WorldGenerator};
 use crate::world::player::BlockPicker;
 
 pub mod chunk;
@@ -43,6 +44,7 @@ pub mod camera;
 pub mod block;
 pub mod machine;
 pub mod player;
+pub mod generation;
 
 #[derive(Default)]
 pub struct GameWorldPlugin;
@@ -127,6 +129,7 @@ fn create_world(
     commands.spawn((
         BlockWorld::new(),
         MachineWorld::new(),
+        WorldGenerator::new(SineHeightMap::new())
     ))
         .observe(on_world_join);
 }
@@ -719,4 +722,44 @@ fn temp_gen_function(chunk_pos: IVec3, block_reg: &Registry<Block>) -> ChunkData
 
     ChunkData::with_data(vec, palette)
 
+}
+
+
+
+fn sin_gen_function(chunk_pos: IVec3, block_reg: &Registry<Block>, height_map: Arc<SineHeightMap>) -> ChunkData {
+    let mut palette = vec![
+        PaletteEntry::new(BlockState::new("air", block_reg).unwrap()),
+        PaletteEntry::new(BlockState::new("stone", block_reg).unwrap()),
+        PaletteEntry::new(BlockState::new("dirt", block_reg).unwrap()),
+        PaletteEntry::new(BlockState::new("grass_block", block_reg).unwrap()),
+    ];
+
+    let mut vec = Vec::with_capacity(ChunkData::BLOCKS_PER_CHUNK);
+
+    // Data is stored Z -> X -> Y, so we iterate over all z first then all x then all y.
+    for y in 0..ChunkData::CHUNK_SIZE {
+        for x in 0..ChunkData::CHUNK_SIZE {
+            for z in 0..ChunkData::CHUNK_SIZE {
+                let block_pos = chunk::chunk_pos_to_world_pos(chunk_pos) + ivec3(x as i32, y as i32, z as i32);
+                let height = height_map.get_height(ivec2(block_pos.x, block_pos.z));
+                let diff = block_pos.y - height;
+                let id = match diff {
+                    i32::MIN..=-5 => 1,
+                    -4..=-1 => 2,
+                    0 => 3,
+                    _ => 0
+                };
+
+                palette[id].increment_ref_count();
+
+                // if block_pos.y > 0 && id == 2 {
+                //     println!("Why is this dirt? {}, local: {}", block_pos, ivec3(x as i32, y as i32, z as i32));
+                // }
+
+                vec.push(id as u8);
+            }
+        }
+    }
+
+    ChunkData::with_data(vec, palette)
 }

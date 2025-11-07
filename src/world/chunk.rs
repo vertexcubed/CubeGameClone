@@ -290,7 +290,7 @@ impl ChunkData {
         if self.palette[old_block].block == block {
             return Ok(block);
         }
-        
+
         // if single block chunk, now we need to init data and expand
         if self.is_single {
 
@@ -301,7 +301,7 @@ impl ChunkData {
             // set refcount to 32768
             self.palette[0].ref_count = Self::BLOCKS_PER_CHUNK as u16;
         }
-        
+
 
         //Grab the old block and decrease the refcount.
         let mut p = &mut self.palette[old_block];
@@ -334,7 +334,7 @@ impl ChunkData {
         Ok(ret)
 
     }
-    
+
     pub fn set_raw(&mut self, index: usize, block_id: usize) {
         if self.is_single {
             panic!("Cannot set raw on single chunks!")
@@ -431,7 +431,7 @@ impl PaletteEntry {
 // }
 
 // fn set_raw(data: &mut BitVec, id_size: usize, scaled_index: usize, value: usize) {
-// 
+//
 //     let arr = value.into_bitarray::<Msb0>();
 //     let slice = &arr[size_of::<usize>() * 8 - id_size..size_of::<usize>() * 8];
 //     for i in 0..id_size {
