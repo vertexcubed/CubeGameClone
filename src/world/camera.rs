@@ -16,7 +16,7 @@ impl Default for CameraSettings {
             pitch_sensitivity: 0.75,
             yaw_sensitivity: 0.75,
             fov: 90.0,
-            movement_speed: 15.0
+            movement_speed: 50.0
         }
     }
 }

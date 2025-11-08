@@ -21,13 +21,14 @@ use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 use block::{BlockState, ChunkMap, Direction};
 use noiz::layering::Octave;
 use noiz::prelude::common_noise::{Perlin, PerlinWithDerivative};
-use noiz::prelude::{EuclideanLength, FractalLayers, LayeredNoise, Normed, NormedByDerivative, PeakDerivativeContribution, Persistence, SNormToUNorm, Scaled};
+use noiz::prelude::{EuclideanLength, FractalLayers, LayeredNoise, Masked, Normed, NormedByDerivative, PeakDerivativeContribution, Persistence, SNormToUNorm, Scaled};
 use noiz::rng::NoiseRng;
 use player::LookAtData;
 use std::collections::VecDeque;
 use std::f32::consts::PI;
 use std::sync::{Arc, RwLock};
-use noiz::math_noise::{Pow2, Pow3};
+use noiz::math_noise::{NoiseCurve, Pow2, Pow3};
+use noiz::misc_noise::ExtraRng;
 
 pub mod chunk;
 pub mod camera;
@@ -131,27 +132,36 @@ fn create_world(
     // noise.gain = 0.5;
 
 
+    let mountains = (
+        LayeredNoise::new(
+            NormedByDerivative::<
+                f32,
+                EuclideanLength,
+                PeakDerivativeContribution,
+            >::default().with_falloff(1.25),
+            Persistence(0.5),
+            FractalLayers {
+                layer: Octave::<PerlinWithDerivative>::default(),
+                lacunarity: 2.0,
+                amount: 5,
+            }
+        ),
+        SNormToUNorm,
+        Pow2,
+        Scaled::<f32>(350.0)
+    );
+
+    let mountain_control = (
+        ExtraRng,
+        Scaled(0.25),
+        Perlin::default(),
+        SNormToUNorm,
+        NoiseCurve(SmoothStepCurve.reparametrize_by_curve(SmoothStepCurve))
+    );
 
     let noise = noiz::Noise {
-        noise: (
-            LayeredNoise::new(
-                NormedByDerivative::<
-                    f32,
-                    EuclideanLength,
-                    PeakDerivativeContribution,
-                >::default().with_falloff(0.3),
-                Persistence(0.5),
-                FractalLayers {
-                    layer: Octave::<PerlinWithDerivative>::default(),
-                    lacunarity: 2.0,
-                    amount: 6,
-                }
-            ),
-            SNormToUNorm,
-            Pow3,
-            Scaled::<f32>(100.0)
-        ),
-        seed: NoiseRng(67),
+        noise: Masked(mountains, mountain_control),
+        seed: NoiseRng(69420),
         frequency: 0.01,
     };
 
