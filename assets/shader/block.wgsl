@@ -12,8 +12,8 @@
 
 //TODO: update to work with PBR?
 
-@group(2) @binding(0) var my_array_texture: texture_2d_array<f32>;
-@group(2) @binding(1) var my_array_texture_sampler: sampler;
+@group(#{MATERIAL_BIND_GROUP}) @binding(0) var my_array_texture: texture_2d_array<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(1) var my_array_texture_sampler: sampler;
 
 struct Vertex {
     @builtin(instance_index) instance_index: u32,

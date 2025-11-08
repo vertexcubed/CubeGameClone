@@ -1,5 +1,5 @@
 use crate::world::block::BlockState;
-use bevy::prelude::{Event, IVec3, Vec3};
+use bevy::prelude::{Entity, EntityEvent, Event, IVec3, Vec3};
 
 
 // TODO: migrate to Observer
@@ -18,7 +18,9 @@ pub struct SetBlockEvent {
 }
 
 
-#[derive(Event)]
+#[derive(EntityEvent)]
 pub struct JoinedWorldEvent {
     pub pos: Vec3,
+    #[event_target]
+    pub world: Entity,
 }

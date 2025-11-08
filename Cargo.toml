@@ -5,10 +5,10 @@ edition = "2024"
 
 [dependencies]
 arc-swap = "1.7.1"
-bevy = { version = "0.16.0"}
-bevy_polyline = "0.12.0"
+bevy = { version = "0.17.2" }
 bimap = { version = "0.6.3", features = ["serde"] }
-bitvec = "1.0.1"
+lru = "0.16.2"
+noiz = "0.3.0"
 rand = "0.9.1"
 serde = { version = "1.0.219", features = ["derive", "serde_derive"] }
 thiserror = "2.0.12"

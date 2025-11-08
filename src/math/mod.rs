@@ -1,20 +1,17 @@
 //! Module that provides helpful math functions.
 
-use bitvec::prelude::BitSlice;
+use bevy::math::{Vec2, Vec3};
+use noiz::NoiseFunction;
 
 pub mod ray;
 pub mod block;
 
+/// Trait alias for a 2D Noise function. See [`NoiseFunction`] for more info
+pub trait NoiseFunction2D: NoiseFunction<Vec2, Output=f32> {}
+impl <T: NoiseFunction<Vec2, Output=f32>> NoiseFunction2D for T {}
 
 
 
-pub fn bslice_to_usize(slice: &BitSlice) -> usize {
-    let mut acc = 0;
-    for b in slice {
-        acc = acc << 1;
-        if *b {
-            acc += 1;
-        }
-    }
-    acc
-}
+/// Trait alias for a 3D Noise function. See [`NoiseFunction`] for more info
+pub trait NoiseFunction3D: NoiseFunction<Vec3, Output=f32> {}
+impl <T: NoiseFunction<Vec3, Output=f32>> NoiseFunction3D for T {}

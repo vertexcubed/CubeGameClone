@@ -6,9 +6,9 @@ use bevy::asset::RenderAssetUsages;
 use bevy::log::info_span;
 use bevy::math::{vec3, IVec3};
 use bevy::prelude::{info, ivec3, Mesh};
-use bevy::render::mesh::{Indices, PrimitiveTopology};
 use std::collections::HashMap;
 use std::time::Instant;
+use bevy::mesh::{Indices, PrimitiveTopology};
 use crate::world::block::{BlockState, Direction};
 
 #[derive(Debug, Copy, Clone, PartialEq)]

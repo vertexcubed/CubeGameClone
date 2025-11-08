@@ -1,5 +1,3 @@
-use crate::asset::block::BlockModelAsset;
-use crate::core::errors::WorldError;
 use crate::core::event::{JoinedWorldEvent, PlayerMovedEvent, SetBlockEvent};
 use crate::core::state::MainGameState;
 use crate::math::block::{BlockPos, Vec3Ext};
@@ -7,37 +5,29 @@ use crate::math::ray;
 use crate::math::ray::RayResult;
 use crate::registry::block::Block;
 use crate::registry::{Registry, RegistryHandle};
-use crate::render;
-use crate::render::block::BlockTextures;
-use crate::render::block::MeshDataCache;
-use crate::render::material::BlockMaterial;
 use crate::world::block::BlockWorld;
 use crate::world::camera::{CameraSettings, MainCamera};
-use crate::world::chunk::{Chunk, ChunkData, ChunkNeedsMeshing, PaletteEntry};
+use crate::world::chunk::{ChunkData, ChunkNeedsMeshing, PaletteEntry};
+use crate::world::generation::{HeightMapProvider, NoiseHeightMap, WorldGenerator};
 use crate::world::machine::MachineWorld;
-use bevy::asset::AssetContainer;
+use crate::world::player::BlockPicker;
 use bevy::color::palettes::css;
 use bevy::input::mouse::{AccumulatedMouseMotion, MouseScrollUnit, MouseWheel};
 use bevy::math::bounding::{Aabb3d, IntersectsVolume};
 use bevy::pbr::wireframe::{NoWireframe, WireframeConfig};
 use bevy::prelude::*;
-use bevy::render::primitives::Aabb;
-use bevy::tasks::futures_lite::future;
-use bevy::tasks::{block_on, AsyncComputeTaskPool, Task};
-use bevy::window::{CursorGrabMode, PrimaryWindow};
-use bitvec::order::Msb0;
-use bitvec::prelude::BitVec;
-use bitvec::view::BitViewSized;
+use bevy::tasks::{AsyncComputeTaskPool, Task};
+use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 use block::{BlockState, ChunkMap, Direction};
-use rand::distr::Uniform;
-use rand::Rng;
-use std::collections::{HashMap, VecDeque};
+use noiz::layering::Octave;
+use noiz::prelude::common_noise::{Perlin, PerlinWithDerivative};
+use noiz::prelude::{EuclideanLength, FractalLayers, LayeredNoise, Normed, NormedByDerivative, PeakDerivativeContribution, Persistence, SNormToUNorm, Scaled};
+use noiz::rng::NoiseRng;
+use player::LookAtData;
+use std::collections::VecDeque;
 use std::f32::consts::PI;
 use std::sync::{Arc, RwLock};
-use std::time::Instant;
-use player::LookAtData;
-use crate::world::generation::{HeightMapProvider, SineHeightMap, WorldGenerator};
-use crate::world::player::BlockPicker;
+use noiz::math_noise::{Pow2, Pow3};
 
 pub mod chunk;
 pub mod camera;
@@ -78,12 +68,12 @@ fn setup_world(
     info!("Loading world...");
     commands.spawn((
         Camera3d::default(),
-        Projection::from(PerspectiveProjection {
+        Projection::Perspective(PerspectiveProjection {
             fov: camera_settings.fov.to_radians(),
             ..default()
         }),
         MainCamera,
-        Transform::from_xyz(0.0, 2.0, 0.0),
+        Transform::from_xyz(0.0, 100.0, 0.0),
         LookAtData::default(),
         BlockPicker::default(),
     ));
@@ -126,10 +116,50 @@ fn create_world(
 ) {
 
 
+    // let height_map = NoiseHeightMap::new(
+    //     libnoise::Source::perlin(67)
+    //         .fbm(4, 0.01, 2.0, 0.5)
+    //         .mul(100.0)
+    // );
+
+    // let mut noise = FastNoiseLite::with_seed(67);
+    // noise.noise_type = NoiseType::Perlin;
+    // noise.fractal_type = FractalType::FBm;
+    // noise.octaves = 6;
+    // noise.frequency = 0.003;
+    // noise.lacunarity = 2.0;
+    // noise.gain = 0.5;
+
+
+
+    let noise = noiz::Noise {
+        noise: (
+            LayeredNoise::new(
+                NormedByDerivative::<
+                    f32,
+                    EuclideanLength,
+                    PeakDerivativeContribution,
+                >::default().with_falloff(0.3),
+                Persistence(0.5),
+                FractalLayers {
+                    layer: Octave::<PerlinWithDerivative>::default(),
+                    lacunarity: 2.0,
+                    amount: 6,
+                }
+            ),
+            SNormToUNorm,
+            Pow3,
+            Scaled::<f32>(100.0)
+        ),
+        seed: NoiseRng(67),
+        frequency: 0.01,
+    };
+
+
     commands.spawn((
         BlockWorld::new(),
         MachineWorld::new(),
-        WorldGenerator::new(SineHeightMap::new())
+        WorldGenerator::new(NoiseHeightMap::new(noise))
     ))
         .observe(on_world_join);
 }
@@ -320,12 +350,12 @@ fn look_at_block(
 }
 
 fn grab_cursor(
-    mut window: Single<&mut Window, With<PrimaryWindow>>,
+    mut cursor_options: Single<&mut CursorOptions, With<PrimaryWindow>>,
 ) {
-    window.cursor_options.grab_mode = CursorGrabMode::Locked;
+    cursor_options.grab_mode = CursorGrabMode::Locked;
 
     // also hide the cursor
-    window.cursor_options.visible = false;
+    cursor_options.visible = false;
 }
 
 
@@ -339,9 +369,10 @@ fn join_world(
         return;
     }
     for world in q_world.iter() {
-        commands.trigger_targets(JoinedWorldEvent {
-            pos: camera.translation
-        }, world);
+        commands.trigger(JoinedWorldEvent {
+            pos: camera.translation,
+            world,
+        });
     }
     *has_run = true;
 }
@@ -349,10 +380,10 @@ fn join_world(
 
 
 fn on_world_join(
-    trigger: Trigger<JoinedWorldEvent>,
+    trigger: On<JoinedWorldEvent>,
     mut q_world: Query<&mut BlockWorld>,
 ) {
-    let id = trigger.target();
+    let id = trigger.world;
     let Ok(mut world) = q_world.get_mut(id) else {
         return;
     };
@@ -395,7 +426,7 @@ fn on_world_join(
 
 // Spawns and despawns chunks
 fn spawn_and_despawn_chunks(
-    trigger: Trigger<PlayerMovedEvent>,
+    trigger: On<PlayerMovedEvent>,
     mut world: Single<&mut BlockWorld>,
 ) {
 
@@ -726,7 +757,8 @@ fn temp_gen_function(chunk_pos: IVec3, block_reg: &Registry<Block>) -> ChunkData
 
 
 
-fn sin_gen_function(chunk_pos: IVec3, block_reg: &Registry<Block>, height_map: Arc<SineHeightMap>) -> ChunkData {
+fn noise_gen_function(chunk_pos: IVec3, block_reg: &Registry<Block>, height_map: Arc<dyn HeightMapProvider>) -> ChunkData {
+    let _span = info_span!("noise_gen_function");
     let mut palette = vec![
         PaletteEntry::new(BlockState::new("air", block_reg).unwrap()),
         PaletteEntry::new(BlockState::new("stone", block_reg).unwrap()),
@@ -734,14 +766,16 @@ fn sin_gen_function(chunk_pos: IVec3, block_reg: &Registry<Block>, height_map: A
         PaletteEntry::new(BlockState::new("grass_block", block_reg).unwrap()),
     ];
 
-    let mut vec = Vec::with_capacity(ChunkData::BLOCKS_PER_CHUNK);
+    let heights = height_map.get_chunk(ivec2(chunk_pos.x, chunk_pos.z));
 
+
+    let mut vec = Vec::with_capacity(ChunkData::BLOCKS_PER_CHUNK);
     // Data is stored Z -> X -> Y, so we iterate over all z first then all x then all y.
     for y in 0..ChunkData::CHUNK_SIZE {
         for x in 0..ChunkData::CHUNK_SIZE {
             for z in 0..ChunkData::CHUNK_SIZE {
                 let block_pos = chunk::chunk_pos_to_world_pos(chunk_pos) + ivec3(x as i32, y as i32, z as i32);
-                let height = height_map.get_height(ivec2(block_pos.x, block_pos.z));
+                let height = heights.get(ivec2(x as i32, z as i32));
                 let diff = block_pos.y - height;
                 let id = match diff {
                     i32::MIN..=-5 => 1,
@@ -749,17 +783,10 @@ fn sin_gen_function(chunk_pos: IVec3, block_reg: &Registry<Block>, height_map: A
                     0 => 3,
                     _ => 0
                 };
-
                 palette[id].increment_ref_count();
-
-                // if block_pos.y > 0 && id == 2 {
-                //     println!("Why is this dirt? {}, local: {}", block_pos, ivec3(x as i32, y as i32, z as i32));
-                // }
-
                 vec.push(id as u8);
             }
         }
     }
-
     ChunkData::with_data(vec, palette)
 }

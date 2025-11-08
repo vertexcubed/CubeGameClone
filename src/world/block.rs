@@ -7,7 +7,7 @@ use crate::render;
 use crate::render::block::BlockTextures;
 use crate::render::block::MeshDataCache;
 use crate::world::chunk::{Chunk, ChunkData, ChunkMarker, ChunkMeshMarker, ChunkNeedsMeshing};
-use crate::world::{chunk, sin_gen_function, temp_gen_function};
+use crate::world::{chunk, noise_gen_function, temp_gen_function};
 use bevy::app::PostUpdate;
 use bevy::asset::Assets;
 use bevy::ecs::system::SystemState;
@@ -15,13 +15,13 @@ use bevy::log::info_span;
 use bevy::math::{ivec3, Vec3};
 use bevy::pbr::MeshMaterial3d;
 use bevy::prelude::{error, info, warn, App, Children, Commands, Component, Entity, EventWriter, Events, First, IVec3, IntoScheduleConfigs, Mesh, Mesh3d, PreUpdate, Query, QueryState, Res, ResMut, Single, Visibility, With};
-use bevy::render::primitives::Aabb;
 use bevy::tasks::futures_lite::future;
 use bevy::tasks::{block_on, AsyncComputeTaskPool, Task};
 use std::collections::hash_map::Iter;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use bevy::camera::primitives::Aabb;
 use serde::{Deserialize, Serialize};
 use crate::core::errors::BlockStateError::InvalidId;
 use crate::world::generation::{SineHeightMap, WorldGenerator};
@@ -197,13 +197,13 @@ pub fn add_systems(app: &mut App) {
 }
 
 fn process_generate_queue(
-    mut single: Single<(&mut BlockWorld, &mut WorldGenerator<SineHeightMap>)>,
+    mut single: Single<(&mut BlockWorld, &mut WorldGenerator)>,
     mut commands: Commands,
     block_reg: Res<RegistryHandle<Block>>
 ) {
     let mut single = single.into_inner();
     //rust rover not showing me types so gonna specify here
-    let (world, generator): (&mut BlockWorld, &mut WorldGenerator<SineHeightMap>) = (single.0.as_mut(), single.1.as_mut());
+    let (world, generator): (&mut BlockWorld, &mut WorldGenerator) = (single.0.as_mut(), single.1.as_mut());
     let (map, chunk_queue) = (&mut world.map, &mut world.chunk_queue);
     
     
@@ -241,7 +241,7 @@ fn process_generate_queue(
         let task = AsyncComputeTaskPool::get().spawn(async move {
             // make_box(reg.as_ref())
             // temp_gen_function(pos, reg.as_ref())
-            sin_gen_function(pos, reg.as_ref(), height_map)
+            noise_gen_function(pos, reg.as_ref(), height_map)
         });
 
         chunk_queue.currently_generating.insert(pos, task);
