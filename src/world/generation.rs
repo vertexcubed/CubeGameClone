@@ -110,6 +110,8 @@ impl WorldGenerator {
 
 
 // one downside of Noiz: ts is type hell
+
+//TODO: switch to LRUCache and evict values that havent been read in a while
 pub struct NoiseHeightMap<N: NoiseFunction2D> {
     generator: noiz::Noise<N>,
     map: RwLock<HashMap<IVec2, Arc<OnceLock<HeightMapGroup>>>>

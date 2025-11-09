@@ -20,15 +20,17 @@ use bevy::tasks::{AsyncComputeTaskPool, Task};
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 use block::{BlockState, ChunkMap, Direction};
 use noiz::layering::Octave;
-use noiz::prelude::common_noise::{Perlin, PerlinWithDerivative};
-use noiz::prelude::{EuclideanLength, FractalLayers, LayeredNoise, Masked, Normed, NormedByDerivative, PeakDerivativeContribution, Persistence, SNormToUNorm, Scaled};
+use noiz::prelude::common_noise::{Perlin, PerlinWithDerivative, Simplex};
+use noiz::prelude::{EuclideanLength, FractalLayers, LayeredNoise, Masked, Normed, NormedByDerivative, Offset, PeakDerivativeContribution, Persistence, SNormToUNorm, Scaled, Translated, UNormToSNorm};
 use noiz::rng::NoiseRng;
 use player::LookAtData;
 use std::collections::VecDeque;
 use std::f32::consts::PI;
 use std::sync::{Arc, RwLock};
-use noiz::math_noise::{NoiseCurve, Pow2, Pow3};
+use bevy::math::cubic_splines::LinearSpline;
+use noiz::math_noise::{Negate, NoiseCurve, Pow2, Pow3};
 use noiz::misc_noise::ExtraRng;
+use crate::math::noise::Combined;
 
 pub mod chunk;
 pub mod camera;
@@ -132,6 +134,41 @@ fn create_world(
     // noise.gain = 0.5;
 
 
+    let oceans = (
+        ExtraRng,
+        // Scaled::<f32>(0.75),
+        LayeredNoise::new(
+            Normed::<f32>::default(),
+            Persistence(0.5),
+            FractalLayers {
+                layer: Octave::<Perlin>::default(),
+                lacunarity: 2.0,
+                amount: 3
+            }
+        ),
+        SNormToUNorm,
+        Scaled::<f32>(50.0),
+        Negate,
+    );
+
+    let ocean_control = (
+        Scaled::<f32>(0.0125),
+        LayeredNoise::new(
+            Normed::<f32>::default(),
+            Persistence(0.5),
+            FractalLayers {
+                layer: Octave::<Simplex>::default(),
+                lacunarity: 2.0,
+                amount: 3
+            }
+        ),
+        SNormToUNorm,
+        NoiseCurve(ExponentialInOutCurve),
+        // Scaled::<f32>(100.0),
+    );
+
+
+
     let mountains = (
         LayeredNoise::new(
             NormedByDerivative::<
@@ -159,17 +196,22 @@ fn create_world(
         NoiseCurve(SmoothStepCurve.reparametrize_by_curve(SmoothStepCurve))
     );
 
+
     let noise = noiz::Noise {
-        noise: Masked(mountains, mountain_control),
+        noise: Combined(
+            Masked(Masked(mountains, mountain_control), ocean_control),
+            Masked(oceans, ocean_control)
+        ),
         seed: NoiseRng(69420),
         frequency: 0.01,
     };
 
+    let height_map = NoiseHeightMap::new(noise);
 
     commands.spawn((
         BlockWorld::new(),
         MachineWorld::new(),
-        WorldGenerator::new(NoiseHeightMap::new(noise))
+        WorldGenerator::new(height_map)
     ))
         .observe(on_world_join);
 }
@@ -774,6 +816,7 @@ fn noise_gen_function(chunk_pos: IVec3, block_reg: &Registry<Block>, height_map:
         PaletteEntry::new(BlockState::new("stone", block_reg).unwrap()),
         PaletteEntry::new(BlockState::new("dirt", block_reg).unwrap()),
         PaletteEntry::new(BlockState::new("grass_block", block_reg).unwrap()),
+        PaletteEntry::new(BlockState::new("oak_planks", block_reg).unwrap()),
     ];
 
     let heights = height_map.get_chunk(ivec2(chunk_pos.x, chunk_pos.z));
@@ -787,11 +830,14 @@ fn noise_gen_function(chunk_pos: IVec3, block_reg: &Registry<Block>, height_map:
                 let block_pos = chunk::chunk_pos_to_world_pos(chunk_pos) + ivec3(x as i32, y as i32, z as i32);
                 let height = heights.get(ivec2(x as i32, z as i32));
                 let diff = block_pos.y - height;
-                let id = match diff {
-                    i32::MIN..=-5 => 1,
-                    -4..=-1 => 2,
-                    0 => 3,
-                    _ => 0
+                let sea_level = 0;
+                let id = if diff > 0 && block_pos.y == sea_level { 4 } else {
+                    match diff {
+                        i32::MIN..=-5 => 1,
+                        -4..=-1 => 2,
+                        0 => 3,
+                        _ => 0
+                    }
                 };
                 palette[id].increment_ref_count();
                 vec.push(id as u8);

@@ -5,6 +5,7 @@ use noiz::NoiseFunction;
 
 pub mod ray;
 pub mod block;
+pub mod noise;
 
 /// Trait alias for a 2D Noise function. See [`NoiseFunction`] for more info
 pub trait NoiseFunction2D: NoiseFunction<Vec2, Output=f32> {}
