@@ -184,7 +184,7 @@ impl AssetLoader for BlockModelLoader {
             
             // setup texture map
             for (k, v) in model.textures.iter() {
-                let texture_str = format!("texture/{}.png", v.clone());
+                let texture_str = format!("texture/{}.ktx2", v.clone());
                 model.texture_handles.insert(k.clone(), load_context.load(AssetPath::parse(texture_str.as_str())));
             }
             

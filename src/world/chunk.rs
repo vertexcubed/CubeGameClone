@@ -566,7 +566,6 @@ impl From<&ChunkData> for PackedChunkData {
                 packed_data.push(quad_word);
                 quad_word = 0;
                 bit_pointer = 0;
-                println!("Pushed a new quad word at block {}", i);
             }
         }
 
@@ -583,7 +582,19 @@ impl Into<ChunkData> for PackedChunkData {
         let (palette, block_data, is_single) = (self.palette, self.block_data, self.is_single);
 
         if is_single {
-            todo!()
+            //TODO: move to ChunkData validate function
+            if palette.len() != 1 {
+                panic!("Malformed saved chunk data: data marked as single, but palette length is not 1!");
+            }
+            if palette[0].ref_count as usize != ChunkData::BLOCKS_PER_CHUNK {
+                panic!("Malformed saved chunk data: data marked as single must have refcount of {}", ChunkData::BLOCKS_PER_CHUNK)
+            }
+            return ChunkData {
+                palette: vec![palette[0].clone().into()],
+                data: Vec::new(),
+                is_single: true,
+                double_bytes: false
+            }
         }
         // we don't discard 0 size palettes
         let palette: Vec<PaletteEntry> = palette.into_iter().map(|entry| entry.into()).collect::<Vec<_>>();

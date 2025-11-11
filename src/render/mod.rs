@@ -8,13 +8,13 @@ use crate::world::block::BlockState;
 use bevy::app::{App, Plugin};
 use bevy::asset::{AssetContainer, Assets, RenderAssetUsages};
 use bevy::color::palettes::basic::WHITE;
-use bevy::image::Image;
+use bevy::image::{Image, ImageSampler};
 use bevy::input::ButtonInput;
 use bevy::pbr::wireframe::{NoWireframe, WireframeConfig};
 use bevy::pbr::MaterialPlugin;
 use bevy::prelude::{info, BevyError, Gizmos, Handle, KeyCode, Mesh3d, NextState, OnEnter, Query, Res, ResMut, Resource, Transform, Update, Visibility, With, Without};
 use bevy::render::mesh::allocator::MeshAllocatorSettings;
-use bevy::render::render_resource::{Extent3d, TextureDimension};
+use bevy::render::render_resource::{Extent3d, TextureDataOrder, TextureDescriptor, TextureDimension, TextureUsages, TextureViewDescriptor, TextureViewDimension};
 use bevy::render::RenderApp;
 use bevy::utils::default;
 use block::BlockTextures;
@@ -149,8 +149,10 @@ fn create_block_array_texture(
 
     let mut size = None;
     let mut format = None;
+    let mut data_order = None;
+    let mut mip_count = None;
+    let mut sample_count = None;
     let mut new_data = Vec::new();
-
 
     let mut visited_models = HashSet::new();
     let mut visited_textures = HashSet::new();
@@ -167,7 +169,6 @@ fn create_block_array_texture(
                 block_model_asset.get(
                     &model.model_handle
                 ).unwrap();
-
             for (k, texture_handle) in model.texture_handles.iter() {
                 // if we've already added this texture to the array texture? continue on.
                 if visited_textures.contains(texture_handle) {
@@ -178,22 +179,52 @@ fn create_block_array_texture(
 
                 let image = image_asset.get(texture_handle).unwrap();
                 let descriptor = &image.texture_descriptor;
+
+                info!("{:?} // {:?}", descriptor, image.texture_view_descriptor);
+                if let Some(d) = &image.data {
+                    info!("Data length: {:?}", d.len());
+                }
+
                 let mut should_convert = false;
-                match (size, format) {
-                    (None, None) => {
+                match (size, format, data_order, mip_count, sample_count) {
+                    (None, None, None, None, None) => {
                         size = Some(descriptor.size);
                         format = Some(descriptor.format);
+                        data_order = Some(image.data_order);
+                        mip_count = Some(descriptor.mip_level_count);
+                        sample_count = Some(descriptor.sample_count);
                     }
-                    (Some(s), Some(f)) => {
+                    (Some(s), Some(f), Some(o), Some(mi), Some(sa)) => {
                         if descriptor.size != s {
                             panic!("Block array texture requires size {:?}, but texture {:?} has size {:?}",
                                    s,
-                                   descriptor.label,
+                                   k,
                                    descriptor.size
                             );
                         }
                         if descriptor.format != f {
                             should_convert = true;
+                        }
+                        if o != image.data_order {
+                            panic!("Block array texture requires data ordered {:?}, but texture {:?} has it ordered {:?}",
+                                   o,
+                                   k,
+                                   image.data_order
+                            )
+                        }
+                        if mi != descriptor.mip_level_count {
+                            panic!("Block array texture requires {:?} mipmap levels, but texture {:?} has {:?}",
+                                   mi,
+                                   k,
+                                   descriptor.mip_level_count
+                            );
+                        }
+                        if sa != descriptor.sample_count {
+                            panic!("Block array texture requires {:?} samplers, but texture {:?} has {:?}",
+                                   sa,
+                                   k,
+                                   descriptor.sample_count
+                            );
                         }
                     }
                     _ => {
@@ -238,13 +269,42 @@ fn create_block_array_texture(
         depth_or_array_layers: i
     };
 
-    let new_image = Image::new(
-        size,
-        TextureDimension::D2,
-        new_data,
-        format.unwrap(),
-        RenderAssetUsages::RENDER_WORLD | RenderAssetUsages::MAIN_WORLD
-    );
+
+    let new_image = Image {
+        data: Some(new_data),
+        data_order: TextureDataOrder::LayerMajor,
+        texture_descriptor: TextureDescriptor {
+            label: None,
+            size,
+            mip_level_count: mip_count.unwrap(),
+            sample_count: sample_count.unwrap(),
+            dimension: TextureDimension::D2,
+            format: format.unwrap(),
+            usage: TextureUsages::TEXTURE_BINDING
+                | TextureUsages::COPY_DST
+                | TextureUsages::COPY_SRC,
+            view_formats: &[],
+        },
+        sampler: ImageSampler::nearest(),
+        texture_view_descriptor: Some(TextureViewDescriptor {
+            dimension: Some(TextureViewDimension::D2Array),
+            ..default()
+        }),
+        asset_usage: RenderAssetUsages::RENDER_WORLD | RenderAssetUsages::MAIN_WORLD,
+        copy_on_resize: false,
+    };
+
+
+    // info!("Final image: {:?}", new_image);
+
+    // let mut new_image = Image::new_uninit(
+    //     size,
+    //     TextureDimension::D2,
+    //     format.unwrap(),
+    //     RenderAssetUsages::RENDER_WORLD | RenderAssetUsages::MAIN_WORLD
+    // );
+    // new_image.data = Some(new_data);
+    // new_image.data_order = data_order.unwrap();
 
     block_textures.array_texture = image_asset.add(new_image);
     block_textures.material = materials.add(BlockMaterial {
