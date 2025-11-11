@@ -4,6 +4,7 @@ use bevy::prelude::States;
 pub enum MainGameState {
     #[default]
     LoadStartup,
+    Menu,
     InGame
 }
 

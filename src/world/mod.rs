@@ -7,7 +7,7 @@ use crate::registry::block::Block;
 use crate::registry::{Registry, RegistryHandle};
 use crate::world::block::BlockWorld;
 use crate::world::camera::{CameraSettings, MainCamera};
-use crate::world::chunk::{ChunkData, ChunkNeedsMeshing, PaletteEntry};
+use crate::world::chunk::{ChunkData, ChunkNeedsMeshing, PackedChunkData, PaletteEntry};
 use crate::world::generation::{HeightMapProvider, NoiseHeightMap, WorldGenerator};
 use crate::world::machine::MachineWorld;
 use crate::world::player::BlockPicker;
@@ -26,11 +26,15 @@ use noiz::rng::NoiseRng;
 use player::LookAtData;
 use std::collections::VecDeque;
 use std::f32::consts::PI;
+use std::fs;
+use std::ops::Deref;
 use std::sync::{Arc, RwLock};
+use bevy::asset::ron;
 use bevy::math::cubic_splines::LinearSpline;
 use noiz::math_noise::{Negate, NoiseCurve, Pow2, Pow3};
 use noiz::misc_noise::ExtraRng;
 use crate::math::noise::Combined;
+use crate::RunConfig;
 
 pub mod chunk;
 pub mod camera;
@@ -54,6 +58,8 @@ impl Plugin for GameWorldPlugin {
             .add_systems(OnEnter(MainGameState::InGame), (setup_world, grab_cursor, create_world))
             .add_observer(on_set_block)
             .add_observer(spawn_and_despawn_chunks)
+
+            .add_systems(Update, (temp_save_a_chunk, temp_load_a_chunk).run_if(in_state(MainGameState::InGame)))
         ;
         block::add_systems(app);
     }
@@ -202,6 +208,7 @@ fn create_world(
             Masked(Masked(mountains, mountain_control), ocean_control),
             Masked(oceans, ocean_control)
         ),
+        // noise: ocean_control,
         seed: NoiseRng(69420),
         frequency: 0.01,
     };
@@ -606,6 +613,75 @@ fn on_set_block(
         commands.entity(chunk.get_entity()).insert(ChunkNeedsMeshing);
     }
 }
+
+
+fn temp_save_a_chunk(
+    camera: Single<&Transform, With<MainCamera>>,
+    world: Single<&BlockWorld>,
+    kb_input: Res<ButtonInput<KeyCode>>,
+    run_config: Res<RunConfig>,
+) -> Result<(), BevyError> {
+    if !kb_input.just_pressed(KeyCode::KeyH) {
+        return Ok(());
+    }
+
+
+    let chunk_map = world.get_chunk_map();
+    let camera_chunk = chunk::pos_to_chunk_pos(camera.translation.as_block_pos());
+
+    let chunk = chunk_map.get_chunk(&camera_chunk).unwrap();
+    let chunk_data = chunk.get_data()?;
+    let read_guard = chunk_data.read().unwrap();
+    let data = read_guard.deref();
+    let packed_data: PackedChunkData = data.into();
+
+    let data = ron::ser::to_string(&packed_data)?;
+    let chunk_folder = run_config.data_dir.join("chunks");
+    fs::create_dir_all(&chunk_folder)?;
+    let file = chunk_folder.join("meow.ron");
+    info!("Storing at path {:?}", file);
+    fs::write(file, data.as_bytes())?;
+
+
+    Ok(())
+}
+
+fn temp_load_a_chunk(
+    camera: Single<&Transform, With<MainCamera>>,
+    world: Single<&BlockWorld>,
+    kb_input: Res<ButtonInput<KeyCode>>,
+    run_config: Res<RunConfig>,
+    mut commands: Commands,
+) -> Result<(), BevyError> {
+    if !kb_input.just_pressed(KeyCode::KeyG) {
+        return Ok(());
+    }
+
+
+    let chunk_map = world.get_chunk_map();
+    let camera_chunk = chunk::pos_to_chunk_pos(camera.translation.as_block_pos());
+
+    let chunk = chunk_map.get_chunk(&camera_chunk).unwrap();
+    let chunk_data = chunk.get_data()?;
+    let mut write_data = chunk_data.write().unwrap();
+
+
+    let chunk_folder = run_config.data_dir.join("chunks");
+    fs::create_dir_all(&chunk_folder)?;
+    let file = chunk_folder.join("meow.ron");
+    info!("Reading from path {:?}", file);
+
+    let file = fs::read(file)?;
+    let packed_data: PackedChunkData = ron::de::from_bytes(file.as_slice())?;
+    *write_data = packed_data.into();
+
+    commands.entity(chunk.get_entity()).insert(ChunkNeedsMeshing);
+
+    Ok(())
+}
+
+
+
 
 
 // Below functions are NOT systems and will be removed at some point

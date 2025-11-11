@@ -1,3 +1,4 @@
+use std::fs;
 use crate::asset::block::BlockAsset;
 use crate::core::errors::RegistryError;
 use crate::core::event::{JoinedWorldEvent, PlayerMovedEvent, SetBlockEvent};
@@ -6,12 +7,13 @@ use crate::registry::block::Block;
 use crate::registry::{Registry, RegistryHandle};
 use crate::world::camera::MainCamera;
 use crate::world::block::BlockWorld;
-use crate::{asset, registry};
+use crate::{asset, registry, RunConfig};
 use bevy::app::{App, Plugin, Startup, Update};
-use bevy::asset::{AssetServer, Assets, Handle, LoadedFolder, RecursiveDependencyLoadState};
+use bevy::asset::{ron, AssetServer, Assets, Handle, LoadedFolder, RecursiveDependencyLoadState};
 use bevy::log::error;
 use bevy::prelude::*;
 use std::sync::Arc;
+use serde::{Deserialize, Serialize};
 
 #[allow(dead_code)]
 pub mod state;
@@ -33,13 +35,27 @@ impl Plugin for CoreGamePlugin {
             .init_state::<LoadingState>()
             
             .add_systems(Startup, load_folders)
+            .add_systems(Startup, gen_folders_if_empty)
             .add_systems(Update, (all_folders_loaded, check_loading_blocks)
                 .run_if(in_state(LoadingState::Assets))
             )
             .add_systems(OnEnter(LoadingState::Done), finish_loading)
+            .add_systems(OnEnter(LoadingState::Done), test_writing_to_disk)
         ;
     }
 }
+
+
+fn gen_folders_if_empty(run_config: Res<RunConfig>) -> Result<(), BevyError> {
+    println!("Generating output folders...");
+    fs::create_dir_all(&run_config.data_dir)?;
+    fs::create_dir_all(&run_config.config_dir)?;
+    fs::create_dir_all(&run_config.cache_dir)?;
+
+    Ok(())
+}
+
+
 
 #[derive(Resource, Default)]
 struct LoadedFolders {
@@ -136,6 +152,33 @@ fn all_folders_loaded(
 fn finish_loading(
     mut next_game_state: ResMut<NextState<MainGameState>>,
 ) {
-    // info!("Finished loading.");
+    info!("Finished loading.");
     next_game_state.set(MainGameState::InGame);
+}
+
+
+#[derive(Serialize, Deserialize, Debug)]
+struct MyStruct {
+    name: String,
+    vec: Vec<u8>,
+    other: bool
+}
+
+
+
+
+fn test_writing_to_disk(
+    run_config: Res<RunConfig>
+) -> Result<(), BevyError> {
+    let my_struct = MyStruct {
+        name: String::from("Meow"),
+        vec: vec![0, 12, 33, 14, 0, 0, 0, 2, 3, 4, 5],
+        other: true
+    };
+    let data = ron::ser::to_string(&my_struct)?;
+    let file_name = "my_cool_file.ron";
+    fs::write(run_config.data_dir.join(file_name), data.as_bytes())?;
+    println!("Meow");
+
+    Ok(())
 }

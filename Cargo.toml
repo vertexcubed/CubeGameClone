@@ -2,11 +2,14 @@
 name = "GTClone"
 version = "0.1.0"
 edition = "2024"
+description = "A Voxel game written in Rust with Bevy."
 
 [dependencies]
 arc-swap = "1.7.1"
 bevy = { version = "0.17.2" }
 bimap = { version = "0.6.3", features = ["serde"] }
+clap = { version = "4.5.51", features = ["derive"] }
+directories = "6.0.0"
 lru = "0.16.2"
 noiz = "0.3.0"
 rand = "0.9.1"

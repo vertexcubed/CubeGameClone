@@ -1,24 +1,26 @@
 use std::slice::Iter;
 use std::sync::{Arc, RwLock};
+use bevy::ecs::error::panic;
 use bevy::log::info_span;
 use crate::core::errors::ChunkError;
 use crate::math::block::Vec3Ext;
 use crate::world::block::BlockState;
 use bevy::math::ivec3;
 use bevy::prelude::{Component, Entity, IVec3, Transform};
+use serde::{Deserialize, Serialize};
 
 /// A data structure that represents a chunk in the world. Stores some information about it tied to
 /// its physical state, like the blocks in the chunk and its state.
 #[derive(Debug, Clone)]
 pub struct Chunk {
-    // the position of this chunk in the world. Should always be the same.
+    /// The position of this chunk in the world. Should always be the same.
     pos: IVec3,
-    // data may be read by multiple threads, but only modified by one thread.
-    // Structure somewhat mirrors how chunks are stored to disk
-    // Note: this may not be available! Especially if the chunk is not generated yet.
+    /// Data may be read by multiple threads, but only modified by one thread.
+    /// Structure somewhat mirrors how chunks are stored to disk
+    /// Note: this may not be available! Especially if the chunk is not generated yet.
     data: Option<Arc<RwLock<ChunkData>>>,
-    // The entity ID of the corresponding entity.
-    // The entity stores all mesh information and rendering data and other in world data
+    /// The entity ID of the corresponding entity.
+    /// The entity stores all mesh information and rendering data and other in world data
     chunk_entity: Entity,
     generation_status: ChunkGenerationStatus,
 }
@@ -127,18 +129,17 @@ pub enum ChunkGenerationStatus {
 }
 
 
-// Representation of chunks in memory
-// A chunk is a 32x32x32 region of the world which contains blocks and blockstates.
+/// Representation of chunks in memory
+/// A chunk is a 32x32x32 region of the world which contains blocks and blockstates.
 #[derive(Debug, Clone)]
 pub struct ChunkData {
     palette: Vec<PaletteEntry>,
-    // vec is heap allocated so this is fine
-    // Important: when 2 bytes are used per block, data is stored Little Endian! This means the first byte is the LSB and the second byte is the MSB
+    /// Important: when 2 bytes are used per block, data is stored Little Endian! This means the first byte is the LSB and the second byte is the MSB
     pub data: Vec<u8>,
 
-    // if this is some: chunk is just one block. Can be air.
+    /// if this is true: chunk is just one block. Can be air.
     is_single: bool,
-    // if true, blocks use two bytes per id rather than one. only in the case where > 256 different blocks in a chunk
+    /// if true, blocks use two bytes per id rather than one. only in the case where > 256 different blocks in a chunk
     double_bytes: bool
 }
 
@@ -462,3 +463,181 @@ pub fn pos_to_chunk_local(pos: IVec3) -> IVec3 {
 
 #[derive(Component)]
 pub struct ChunkMeshMarker;
+
+
+/// A packed representation of ChunkData. Fits the data itself into as little u64s as it can.
+/// Other than that, functionally the same.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct PackedChunkData {
+    palette: Vec<PackedPaletteEntry>,
+    /// Important: values are stored from LSB -> MSB.
+    block_data: Vec<u64>,
+    is_single: bool
+}
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct PackedPaletteEntry {
+    ref_count: u16,
+    block: BlockState,
+}
+impl From<PaletteEntry> for PackedPaletteEntry {
+    fn from(value: PaletteEntry) -> Self {
+        PackedPaletteEntry {
+            ref_count: value.ref_count,
+            block: value.block
+        }
+    }
+}
+impl Into<PaletteEntry> for PackedPaletteEntry {
+    fn into(self) -> PaletteEntry {
+        PaletteEntry {
+            ref_count: self.ref_count,
+            block: self.block,
+        }
+    }
+}
+impl From<ChunkData> for PackedChunkData {
+    fn from(value: ChunkData) -> Self {
+        Self::from(&value)
+    }
+}
+
+
+impl From<&ChunkData> for PackedChunkData {
+    fn from(value: &ChunkData) -> Self {
+
+        // single chunks are easy.
+        if value.is_single {
+            //TODO: move to ChunkData validate function
+            if value.palette.len() != 1 {
+                panic!("Malformed ChunkData: data marked as single, but palette length is not 1!");
+            }
+            if value.palette[0].ref_count as usize != ChunkData::BLOCKS_PER_CHUNK {
+                panic!("Malformed ChunkData: data marked as single must have refcount of {}", ChunkData::BLOCKS_PER_CHUNK)
+            }
+
+            return Self {
+                block_data: Vec::new(),
+                palette: vec![value.palette[0].clone().into()],
+                is_single: true
+            }
+        }
+
+        let palette: Vec<PackedPaletteEntry> = value.palette.iter().filter_map(|entry| {
+            // trim empty palette entries
+            if entry.ref_count == 0 { None } else { Some(entry.clone().into()) } //TODO: remove clone
+        }).collect::<Vec<_>>();
+
+
+        // number of bits per id to use, rounded to power of 2
+        // ugly ass formula but idk a better way of simplifying this
+        let id_size = 2_usize.pow(
+            f32::ceil(
+                f32::log2(
+                    f32::log2(
+                        (palette.len() as f32)
+                    )
+                )
+            ) as u32
+        ).max(1); // sets to 1 in the case id_size = 1
+
+        println!("Id size: {}. Palette length: {}.", id_size, palette.len());
+
+
+        let mut packed_data = Vec::<u64>::with_capacity(id_size * 32768 / 64);
+
+        // values will be stored in
+        let mut quad_word = 0_u64;
+        let mut bit_pointer = 0;
+
+        for i in 0..ChunkData::BLOCKS_PER_CHUNK {
+            // grabs the block id regardless of double_bytes or not
+            let id = value.block_at_index(i);
+
+            // creates a bit mask - for example, if we need 4 bits per block, we get 2^4 - 1 = 15 = 0b1111
+            let mask = 2_usize.pow(id_size as u32) - 1;
+            // shift and create the data.
+            let to_add: u64 = ((id & mask) as u64) << bit_pointer;
+            //now we add it to our qword
+            quad_word |= to_add;
+            //now increase bit_pointer
+            bit_pointer += id_size;
+            // if bit_pointer = 64, we've filled this qword. Push to the vec and then set back to 0
+            if bit_pointer >= 64 {
+                packed_data.push(quad_word);
+                quad_word = 0;
+                bit_pointer = 0;
+                println!("Pushed a new quad word at block {}", i);
+            }
+        }
+
+        Self {
+            block_data: packed_data,
+            palette,
+            is_single: false
+        }
+    }
+}
+impl Into<ChunkData> for PackedChunkData {
+    fn into(self) -> ChunkData {
+        // move everything out
+        let (palette, block_data, is_single) = (self.palette, self.block_data, self.is_single);
+
+        if is_single {
+            todo!()
+        }
+        // we don't discard 0 size palettes
+        let palette: Vec<PaletteEntry> = palette.into_iter().map(|entry| entry.into()).collect::<Vec<_>>();
+
+        // number of bits per id to use, rounded to power of 2
+        // ugly ass formula but idk a better way of simplifying this
+        let id_size = 2_usize.pow(
+            f32::ceil(
+                f32::log2(
+                    f32::log2(
+                        (palette.len() as f32)
+                    )
+                )
+            ) as u32
+        ).max(1); // sets to 1 in the case id_size = 1
+
+        let double_bytes = palette.len() > 256;
+        let vec_size = if double_bytes { ChunkData::DOUBLE_BLOCKS_PER_CHUNK } else { ChunkData::BLOCKS_PER_CHUNK };
+        let mut unpacked_data: Vec<u8> = Vec::with_capacity(vec_size);
+
+        let mut qword_index = 0;
+        let mut bit_pointer = 0;
+        while qword_index < block_data.len() {
+            let quad_word = block_data[qword_index];
+
+            // creates a bit mask - for example, if we need 4 bits per block, we get 2^4 - 1 = 15 = 0b1111
+            let mask = 2_u64.pow(id_size as u32) - 1;
+            // shift the mask, grab values, then shift back so its aligned at 0.
+            let block_id: usize = (((mask << bit_pointer) & quad_word) >> bit_pointer) as usize;
+
+            if double_bytes {
+                let lsb = block_id as u8;
+                let msb = (block_id >> 8) as u8;
+                unpacked_data.push(lsb);
+                unpacked_data.push(msb);
+            }
+            else {
+                unpacked_data.push(block_id as u8);
+            }
+            // increment bit_pointer
+            bit_pointer += id_size;
+            // if bit_pointer = 64, we've read everything in this qword. Move on to the next qword
+            if bit_pointer >= 64 {
+                qword_index += 1;
+                bit_pointer = 0;
+            }
+        }
+        assert_eq!(unpacked_data.len(), vec_size);
+
+        ChunkData {
+            data: unpacked_data,
+            palette,
+            is_single,
+            double_bytes,
+        }
+    }
+}

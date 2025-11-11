@@ -545,7 +545,7 @@ fn upload_meshes(
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct BlockState {
     block: String,
     state: BTreeMap<String, String>
